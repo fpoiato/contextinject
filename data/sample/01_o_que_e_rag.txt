@@ -1,0 +1,33 @@
+O que é Retrieval-Augmented Generation (RAG)
+
+RAG é um padrão de arquitetura para sistemas de linguagem natural. Em vez de pedir
+ao modelo de linguagem (LLM) que responda apenas com o que memorizou no treinamento,
+o sistema primeiro busca trechos relevantes em uma base de documentos e só então
+pede ao LLM que redija a resposta usando esses trechos como evidência.
+
+O fluxo canônico tem quatro etapas:
+
+1. Ingestão: PDFs, páginas wiki, tickets e arquivos de texto são lidos e
+   convertidos em texto bruto, com metadados (nome do arquivo, data, autor).
+
+2. Indexação: o texto é dividido em pedaços (chunks). Cada chunk é transformado
+   em um vetor numérico chamado embedding e gravado em um banco vetorial como
+   o ChromaDB. Esse banco não substitui um SQL: ele serve para busca por
+   similaridade, não para joins.
+
+3. Recuperação (retrieval): a pergunta do usuário também vira um embedding.
+   O banco devolve os chunks cujo vetor aponta para uma direção parecida com
+   a da pergunta. Isso é busca semântica.
+
+4. Geração: o LLM recebe um prompt com a pergunta e os chunks recuperados.
+   A tarefa dele é sintetizar, citar e recusar-se a inventar o que o contexto
+   não contém.
+
+Por que RAG existe? Porque o conhecimento de um LLM é estático (data de corte
+do treinamento), caro de atualizar via fine-tuning, e pouco auditável. Com RAG,
+você atualiza a resposta trocando documentos, não retreinando o modelo. Também
+reduz alucinações: o modelo é instruído a ficar no contexto recuperado.
+
+RAG não é mágica. Se o retriever devolver trechos errados, a geração vai
+parecer confiante e mesmo assim estar errada. Por isso um bom projeto de
+portfólio mostra os chunks recuperados junto com a resposta final.

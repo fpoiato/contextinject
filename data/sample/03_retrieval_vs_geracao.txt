@@ -1,0 +1,48 @@
+Retrieval versus geração, avaliação e erros comuns
+
+Retrieval e geração são etapas diferentes, com falhas diferentes.
+
+Retrieval escolhe evidências. Ele não escreve frases novas. Se a pergunta for
+"qual a temperatura de sinterização da liga X?" e o índice não tiver a liga X,
+o retriever vai devolver o que for menos distante — talvez outra liga. Isso
+não é "o modelo alucinando"; é o retriever sem documento adequado.
+
+Geração escreve a resposta. Dado um contexto bom, o LLM resume, compara e
+cita. Dado um contexto ruim, ele pode (a) recusar, se o prompt mandar, ou
+(b) interpolar o que sabe do pré-treino, o que parece uma resposta mas não
+está nos seus documentos.
+
+Boas práticas para separar as duas coisas:
+
+- Sempre mostre os chunks e os scores na interface. Se o score for baixo,
+  desconfie da resposta.
+- Force o prompt de geração a dizer "não sei" quando o contexto não cobre
+  a pergunta.
+- Avalie retrieval com métricas próprias (Recall@k, MRR) e geração com
+  outras (fiel ao contexto, citações corretas). Misturar as duas numa nota
+  só esconde o gargalo.
+
+Erros comuns em projetos de RAG:
+
+1. Chunks enormes. O vetor fica genérico e o prompt estoura a janela do LLM.
+2. Chunks minúsculos. Perde-se o contexto; o modelo lê fragmentos inúteis.
+3. top_k alto demais. O prompt enche de trechos irrelevantes e o modelo
+   se distrai (context stuffing).
+4. Não limpar o PDF. Cabeçalhos, números de página e tabelas quebradas
+   viram lixo no índice.
+5. Trocar o modelo de embedding depois de indexar, sem reindexar.
+6. Confundir RAG com fine-tuning. Fine-tuning muda o comportamento do modelo;
+   RAG muda as evidências disponíveis. São complementares, não substitutos.
+
+Experimentos úteis para um portfólio:
+
+- Variar chunk_size (128, 256, 512, 1024) e anotar Recall@3 em 10 perguntas.
+- Comparar embeddings locais (hashing ou sentence-transformers) com OpenAI.
+- Adicionar um reranker (cross-encoder) depois do retrieval inicial.
+- Testar perguntas que exigem vários chunks (multi-hop) versus perguntas
+  factuais de um único parágrafo.
+- Medir latência: ingestão vs. consulta vs. geração.
+
+O objetivo de um RAG educacional não é esconder o pipeline atrás de um
+chat. É deixar cada etapa inspecionável: o chunk, o score, o prompt e a
+resposta final, lado a lado.

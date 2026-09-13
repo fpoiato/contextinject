@@ -1,0 +1,32 @@
+# Ambiente e segredos
+.env
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Vector store local (regenerável via ingestão)
+chroma_db/
+storage/
+
+# Uploads do usuário (os exemplos em data/sample/ ficam versionados)
+data/raw/*
+!data/raw/.gitkeep
+
+# Streamlit / IDE
+.streamlit/secrets.toml
+.idea/
+.vscode/
+*.swp
+.DS_Store

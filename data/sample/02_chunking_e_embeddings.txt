@@ -1,0 +1,38 @@
+Chunking, embeddings e similaridade de cosseno
+
+Chunking é o ato de cortar um documento longo em pedaços menores antes de
+gerar embeddings. É a decisão de engenharia que mais influencia a qualidade
+de um RAG simples.
+
+Por que não embeddar o documento inteiro? Porque um vetor só tem capacidade
+limitada de representar significado. Se você comprime 40 páginas em um único
+ponto no espaço, assuntos diferentes se misturam. Na hora da pergunta, esse
+ponto "médio" não fica especialmente próximo de nada. O retriever então
+devolve o documento todo, ou devolve outro documento igualmente genérico.
+
+Qual o tamanho certo? Não existe um número universal. Para manuais técnicos,
+chunks de 256 a 512 tokens com overlap de 10% a 20% costumam funcionar.
+Overlap significa que o final de um chunk se repete no início do próximo.
+Isso evita que uma definição cortada ao meio desapareça das duas pontas.
+
+Estratégias comuns:
+
+- Corte por tamanho fixo (tokens ou caracteres), simples e previsível.
+- Corte por sentença ou parágrafo, respeitando fronteiras linguísticas.
+- Corte por estrutura (títulos Markdown, seções de PDF), quando o documento
+  já vem bem organizado.
+- Chunking semântico, que agrupa frases próximas em significado.
+
+Embeddings são funções que mapeiam texto em vetores de números reais. Modelos
+como text-embedding-3-small (OpenAI) e voyage-3 (Voyage AI) são treinados para
+que textos com o mesmo significado fiquem próximos, mesmo que usem palavras
+diferentes. "Cão" e "cachorro" devem produzir vetores parecidos.
+
+A similaridade de cosseno mede o ângulo entre dois vetores, não a distância
+euclidiana. Cosseno 1.0 quer dizer a mesma direção; 0.0, direções ortogonais.
+Bancos como o ChromaDB guardam os vetores e, na consulta, devolvem os top-k
+vizinhos com maior cosseno. Isso é o retrieval.
+
+Uma armadilha clássica: o modelo de embedding da pergunta precisa ser o mesmo
+(ou compatível) com o modelo usado na indexação. Caso contrário, pergunta e
+documentos vivem em espaços diferentes e a similaridade perde o sentido.

@@ -1,0 +1,25 @@
+# Framework RAG
+llama-index-core>=0.12.0
+llama-index-vector-stores-chroma>=0.4.0
+llama-index-embeddings-openai>=0.3.0
+llama-index-llms-openai>=0.3.0
+llama-index-readers-file>=0.4.0
+
+# Vector database local
+chromadb>=0.5.0
+
+# Embeddings Voyage (opcional — só usado se VOYAGE_API_KEY existir)
+llama-index-embeddings-voyageai>=0.3.0
+
+# LLM OpenAI / compatível (Grok via API xAI usa o mesmo SDK)
+openai>=1.50.0
+
+# Interface
+streamlit>=1.40.0
+
+# Configuração e PDFs
+python-dotenv>=1.0.0
+pypdf>=5.0.0
+
+# Testes do pipeline educacional (não precisam de API)
+pytest>=8.0.0
