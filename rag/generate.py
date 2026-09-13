@@ -8,6 +8,7 @@ Fluxo desta etapa:
 2. Pedimos ao modelo para responder SÓ com base nesse contexto.
 3. Se não houver chave de API, geramos uma resposta extractiva local
    (útil para demonstrar o pipeline sem gastar tokens).
+   Provedores: Cursor (SDK, só texto), xAI, OpenAI.
 
 Essa separação é o coração do RAG:
 - Retrieval = "o que ler"
@@ -17,7 +18,10 @@ Essa separação é o coração do RAG:
 from __future__ import annotations
 
 import re
+import shutil
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 
 from openai import OpenAI
 
@@ -108,10 +112,63 @@ def _extractive_answer(query: str, chunks: list[RetrievedChunk]) -> str:
     return header + "\n\n".join(selected)
 
 
+def _call_cursor_agent(message: str, api_key: str, model: str) -> str:
+    """Gera texto com o Cursor SDK, sem tools (não edita arquivos).
+
+    A chave do Cursor não é um endpoint OpenAI-compatível. O SDK sobe um
+    agente local só-texto: `tools=[]` impede shell, leitura e edição.
+    """
+    try:
+        from cursor_sdk import Agent, AgentOptions, CursorAgentError, LocalAgentOptions
+    except ImportError as exc:
+        raise RuntimeError(
+            "CURSOR_API_KEY está definida, mas o pacote `cursor-sdk` não está "
+            "instalado. Rode: pip install cursor-sdk"
+        ) from exc
+
+    workdir = Path(tempfile.mkdtemp(prefix="rag-cursor-"))
+    try:
+        try:
+            result = Agent.prompt(
+                message,
+                AgentOptions(
+                    api_key=api_key,
+                    model=model,
+                    tools=[],
+                    local=LocalAgentOptions(cwd=str(workdir)),
+                ),
+            )
+        except CursorAgentError as exc:
+            raise RuntimeError(f"Falha ao iniciar o agente Cursor: {exc}") from exc
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+    if getattr(result, "status", None) == "error":
+        raise RuntimeError("O agente Cursor executou, mas falhou ao gerar a resposta.")
+
+    answer = (getattr(result, "result", None) or "").strip()
+    if not answer:
+        raise RuntimeError("O agente Cursor não devolveu texto.")
+    return answer
+
+
 def generate(query: str, chunks: list[RetrievedChunk]) -> GenerationResult:
     """Chama o LLM (ou o fallback extractivo) com o prompt montado."""
     prompt = build_prompt(query, chunks)
     providers = load_providers()
+
+    if providers.llm_provider == "cursor":
+        answer = _call_cursor_agent(
+            f"{SYSTEM_PROMPT}\n\n{prompt}",
+            api_key=providers.cursor_api_key or "",
+            model=providers.cursor_llm_model,
+        )
+        return GenerationResult(
+            answer=answer,
+            prompt=prompt,
+            provider="cursor",
+            model=providers.cursor_llm_model,
+        )
 
     if providers.llm_provider == "xai":
         client = OpenAI(

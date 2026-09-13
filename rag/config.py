@@ -52,6 +52,14 @@ class RetrievalConfig:
     top_k: int = 3
 
 
+def _env_secret(name: str) -> str | None:
+    """Lê chave do ambiente, ignorando placeholder do .env.example."""
+    value = (os.getenv(name) or "").strip()
+    if not value or "seu-token-aqui" in value.lower():
+        return None
+    return value
+
+
 @dataclass(frozen=True)
 class ProviderConfig:
     """Quais APIs estão disponíveis neste ambiente."""
@@ -63,6 +71,8 @@ class ProviderConfig:
     voyage_embedding_model: str
     xai_api_key: str | None
     xai_llm_model: str
+    cursor_api_key: str | None
+    cursor_llm_model: str
 
     @property
     def embedding_provider(self) -> str:
@@ -75,7 +85,9 @@ class ProviderConfig:
 
     @property
     def llm_provider(self) -> str:
-        """xai/grok > openai > mock (resposta extractiva)."""
+        """cursor > xai/grok > openai > mock (resposta extractiva)."""
+        if self.cursor_api_key:
+            return "cursor"
         if self.xai_api_key:
             return "xai"
         if self.openai_api_key:
@@ -84,18 +96,20 @@ class ProviderConfig:
 
     @property
     def is_demo_mode(self) -> bool:
-        return self.embedding_provider == "mock" or self.llm_provider == "mock"
+        return self.embedding_provider == "mock" and self.llm_provider == "mock"
 
 
 def load_providers() -> ProviderConfig:
     return ProviderConfig(
-        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
+        openai_api_key=_env_secret("OPENAI_API_KEY"),
         openai_embedding_model=os.getenv(
             "OPENAI_EMBEDDING_MODEL", "text-embedding-3-small"
         ),
         openai_llm_model=os.getenv("OPENAI_LLM_MODEL", "gpt-4o"),
-        voyage_api_key=os.getenv("VOYAGE_API_KEY") or None,
+        voyage_api_key=_env_secret("VOYAGE_API_KEY"),
         voyage_embedding_model=os.getenv("VOYAGE_EMBEDDING_MODEL", "voyage-3"),
-        xai_api_key=os.getenv("XAI_API_KEY") or None,
+        xai_api_key=_env_secret("XAI_API_KEY"),
         xai_llm_model=os.getenv("XAI_LLM_MODEL", "grok-3"),
+        cursor_api_key=_env_secret("CURSOR_API_KEY"),
+        cursor_llm_model=os.getenv("CURSOR_LLM_MODEL", "composer-2.5"),
     )

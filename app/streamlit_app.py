@@ -125,9 +125,16 @@ def main() -> None:
         )
         if status["demo_mode"]:
             st.info(
-                "Sem `OPENAI_API_KEY` o app usa embeddings locais (hashing) "
-                "e uma resposta extractiva. O pipeline é o mesmo; só muda "
-                "a qualidade semântica. Veja o GUIA.md."
+                "Sem chave de LLM (`CURSOR_API_KEY`, `OPENAI_API_KEY` ou "
+                "`XAI_API_KEY`) o app usa embeddings locais (hashing) e uma "
+                "resposta extractiva. O pipeline é o mesmo; só muda a "
+                "qualidade semântica. Veja o GUIA.md."
+            )
+        elif status["embed_provider"] == "mock":
+            st.info(
+                "A geração usa um LLM, mas os embeddings ainda são hashing "
+                "local. Para busca semântica melhor, defina `OPENAI_API_KEY` "
+                "ou `VOYAGE_API_KEY`. A chave do Cursor não faz embeddings."
             )
 
         st.divider()
@@ -292,7 +299,7 @@ def main() -> None:
         st.markdown(
             """
             - **Retrieval** escolhe evidências no *seu* acervo (Chroma + embeddings).
-            - **Geração** redige a resposta (GPT-4o, Grok ou o fallback extractivo).
+            - **Geração** redige a resposta (Cursor, GPT-4o, Grok ou o fallback extractivo).
 
             O prompt da aba Conversar deixa essa fronteira visível: o modelo
             só vê o que o retriever selecionou.

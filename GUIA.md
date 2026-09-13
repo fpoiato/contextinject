@@ -11,7 +11,7 @@ Este arquivo é o roteiro para rodar o **rag-portfolio** na sua máquina, entend
 - Um script e um app Streamlit que fazem o RAG completo.
 - Clareza sobre o que é chunking, embedding, cosseno, retrieval e geração.
 
-Você **não precisa** de GPU. Precisa de Python 3.10+ e, para a versão “de verdade”, uma chave de API.
+Você **não precisa** de GPU. Precisa de Python 3.10+ e, para a versão “de verdade”, uma chave de API (Cursor, OpenAI, Voyage e/ou xAI).
 
 ---
 
@@ -81,7 +81,24 @@ XAI_LLM_MODEL=grok-3
 
 A geração passa a chamar `https://api.x.ai/v1` com o SDK da OpenAI.
 
-### Cenário D — zero chave (modo demonstração)
+### Cenário D — Cursor como LLM
+
+A chave do Cursor **não** substitui a OpenAI nos embeddings: o Cursor SDK é um agente, não um endpoint de `chat.completions`. Aqui ela entra só na geração, com `tools=[]` (só texto, sem editar arquivos).
+
+1. Crie a chave em [cursor.com/dashboard](https://cursor.com/dashboard) → Integrations / API Keys.
+2. No `.env`:
+
+```text
+CURSOR_API_KEY=cursor_...
+CURSOR_LLM_MODEL=composer-2.5
+```
+
+3. Instale o extra: `pip install cursor-sdk`
+4. Embeddings continuam Voyage, OpenAI ou hashing local.
+
+Se `CURSOR_API_KEY` estiver definida, ela tem prioridade sobre xAI e OpenAI na geração.
+
+### Cenário E — zero chave (modo demonstração)
 
 Não crie `.env`. O projeto:
 

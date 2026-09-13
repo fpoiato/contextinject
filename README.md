@@ -2,7 +2,7 @@
 
 Pipeline educacional de **Retrieval-Augmented Generation** (RAG) para estudar — e demonstrar em portfólio — cada etapa do fluxo, sem esconder o que o framework faz por baixo.
 
-Stack: **LlamaIndex** · **ChromaDB** (local) · **OpenAI embeddings** (ou Voyage) · **GPT-4o / Grok** · **Streamlit**
+Stack: **LlamaIndex** · **ChromaDB** (local) · **OpenAI embeddings** (ou Voyage) · **Cursor / GPT-4o / Grok** · **Streamlit**
 
 Sem chave de API o projeto ainda roda em **modo demonstração**: embeddings locais por hashing e resposta extractiva. O pipeline é o mesmo; só muda a qualidade semântica.
 
