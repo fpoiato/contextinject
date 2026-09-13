@@ -23,6 +23,7 @@ storage/
 # Uploads do usuário (os exemplos em data/sample/ ficam versionados)
 data/raw/*
 !data/raw/.gitkeep
+!data/raw/README.md
 
 # Streamlit / IDE
 .streamlit/secrets.toml
