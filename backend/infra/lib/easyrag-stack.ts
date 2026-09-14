@@ -26,6 +26,7 @@ import {
 } from "aws-cdk-lib";
 import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
 import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 
 const APP_DOMAIN = "easyrag.fpoiato.com";
@@ -35,6 +36,9 @@ const ZONE_ID = "Z094351536ZBINA5SU45F";
 const LOCAL_ORIGIN = "http://localhost:4200";
 const COGNITO_DOMAIN_PREFIX = "easyrag-fpoiato";
 const USER_SECRET_PREFIX = "easyrag/users";
+const SES_FROM_EMAIL = "noreply@fpoiato.com";
+const SES_FROM_NAME = "easyRAG";
+const SES_MAIL_FROM = `mail.${ZONE_NAME}`;
 
 export class EasyRagStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -43,6 +47,22 @@ export class EasyRagStack extends Stack {
     const zone = route53.HostedZone.fromHostedZoneAttributes(this, "Zone", {
       hostedZoneId: ZONE_ID,
       zoneName: ZONE_NAME,
+    });
+
+    // DKIM CNAMEs and MAIL FROM MX/TXT for fpoiato.com already exist in Route53
+    // (SES identity predates this stack). Do not recreate them here.
+    new AwsCustomResource(this, "SesMailFrom", {
+      onUpdate: {
+        service: "SESv2",
+        action: "putEmailIdentityMailFromAttributes",
+        parameters: {
+          EmailIdentity: ZONE_NAME,
+          MailFromDomain: SES_MAIL_FROM,
+          BehaviorOnMxFailure: "USE_DEFAULT_VALUE",
+        },
+        physicalResourceId: PhysicalResourceId.of(`${ZONE_NAME}-mail-from`),
+      },
+      policy: AwsCustomResourcePolicy.fromSdkCalls({ resources: AwsCustomResourcePolicy.ANY_RESOURCE }),
     });
 
     const certificate = new acm.Certificate(this, "Cert", {
@@ -159,6 +179,17 @@ export class EasyRagStack extends Stack {
         requireSymbols: false,
       },
       accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      email: cognito.UserPoolEmail.withSES({
+        fromEmail: SES_FROM_EMAIL,
+        fromName: SES_FROM_NAME,
+        sesRegion: this.region,
+        sesVerifiedDomain: ZONE_NAME,
+      }),
+      userVerification: {
+        emailSubject: "Your easyRAG verification code",
+        emailBody: `Your easyRAG verification code is {####}. Enter it at https://${APP_DOMAIN}/verify`,
+        emailStyle: cognito.VerificationEmailStyle.CODE,
+      },
       featurePlan: cognito.FeaturePlan.ESSENTIALS,
       deletionProtection: true,
       removalPolicy: RemovalPolicy.RETAIN,
