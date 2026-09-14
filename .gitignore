@@ -1,5 +1,6 @@
 # Ambiente e segredos
 .env
+.env.*
 .venv/
 venv/
 env/
@@ -10,11 +11,17 @@ __pycache__/
 *$py.class
 *.egg-info/
 .eggs/
-dist/
-build/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+backend/lambdas/**/.bundle/
+
+# Node / Angular / CDK
+node_modules/
+dist/
+.angular/
+cdk.out/
+*.tsbuildinfo
 
 # IDE
 .idea/
@@ -22,3 +29,8 @@ build/
 .cursor/
 *.swp
 .DS_Store
+
+# Model artifacts
+*.onnx
+backend/models/
+backend/lambdas/shared/tokenizer.json

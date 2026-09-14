@@ -1,0 +1,40 @@
+<div class="flex min-h-screen bg-slate-950 text-slate-100">
+  <aside class="hidden w-80 shrink-0 flex-col border-r border-slate-800 bg-slate-950/80 p-5 md:flex">
+    <div class="mb-6">
+      <p class="text-xs uppercase tracking-[0.2em] text-cyan-400">RAG workspace</p>
+      <h1 class="mt-1 text-2xl font-semibold">easyRAG</h1>
+      <p class="mt-2 text-sm text-slate-400">Chat with your own documents using pgvector retrieval.</p>
+    </div>
+    <app-upload class="min-h-0 flex-1 overflow-y-auto" />
+    <button
+      class="mt-4 rounded-xl border border-slate-800 px-3 py-2 text-sm text-slate-300 hover:border-cyan-500"
+      type="button"
+      (click)="settingsOpen.set(true)"
+    >
+      Settings
+    </button>
+  </aside>
+
+  <main class="flex min-h-screen min-w-0 flex-1 flex-col">
+    <header class="flex items-center justify-between border-b border-slate-800 px-4 py-3 md:px-6">
+      <div>
+        <p class="text-sm font-medium">Corporate knowledge chat</p>
+        <p class="text-xs text-slate-500">Sources appear under each answer when chunks are retrieved.</p>
+      </div>
+      <button
+        class="rounded-lg border border-slate-800 px-3 py-1.5 text-sm md:hidden"
+        type="button"
+        (click)="settingsOpen.set(true)"
+      >
+        Settings
+      </button>
+    </header>
+    <section class="min-h-0 flex-1 p-4 md:p-6">
+      <app-chat class="flex h-[calc(100vh-6rem)] flex-col" />
+    </section>
+  </main>
+</div>
+
+@if (settingsOpen()) {
+  <app-settings (closed)="settingsOpen.set(false)" />
+}

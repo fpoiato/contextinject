@@ -1,0 +1,96 @@
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" (click)="closed.emit()">
+  <section
+    class="w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-950 p-6 text-slate-100 shadow-2xl"
+    (click)="$event.stopPropagation()"
+  >
+    <div class="mb-5 flex items-center justify-between">
+      <div>
+        <h2 class="text-lg font-semibold">Settings</h2>
+        <p class="text-sm text-slate-400">API keys stay in this browser. They are sent only with chat requests.</p>
+      </div>
+      <button class="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-800" type="button" (click)="closed.emit()">
+        Close
+      </button>
+    </div>
+
+    <label class="mb-3 block text-sm">
+      <span class="mb-1 block text-slate-400">Provider</span>
+      <select class="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2" [(ngModel)]="provider">
+        <option value="openrouter">OpenRouter</option>
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="gemini">Gemini</option>
+        <option value="grok">Grok</option>
+      </select>
+    </label>
+
+    <label class="mb-3 block text-sm">
+      <span class="mb-1 block text-slate-400">Model</span>
+      <input
+        class="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2"
+        list="model-options"
+        [(ngModel)]="model"
+      />
+      <datalist id="model-options">
+        @for (item of models; track item.id) {
+          <option [value]="item.id">{{ item.label }}</option>
+        }
+      </datalist>
+    </label>
+
+    <label class="mb-4 block text-sm">
+      <span class="mb-1 block text-slate-400">API key</span>
+      <input
+        class="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2"
+        type="password"
+        autocomplete="off"
+        [(ngModel)]="apiKey"
+        placeholder="sk-or-... or provider key"
+      />
+    </label>
+
+    <label class="mb-5 flex items-center gap-2 text-sm text-slate-300">
+      <input type="checkbox" [(ngModel)]="darkMode" />
+      Dark mode
+    </label>
+
+    <div class="mb-4 rounded-xl border border-slate-800 bg-slate-900 p-4">
+      <div class="mb-2 flex items-center justify-between">
+        <h3 class="text-sm font-medium">PostgreSQL</h3>
+        <span class="rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wide">{{ dbStatus() }}</span>
+      </div>
+      <p class="mb-3 text-xs text-slate-400">
+        The smallest RDS instance is stopped every night at 02:00 America/Sao_Paulo. Start it before uploading or chatting.
+      </p>
+      <div class="flex gap-2">
+        <button
+          class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          type="button"
+          [disabled]="busy()"
+          (click)="startDb()"
+        >
+          Start DB
+        </button>
+        <button
+          class="rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+          type="button"
+          [disabled]="busy()"
+          (click)="stopDb()"
+        >
+          Stop DB
+        </button>
+        <button class="rounded-lg px-3 py-1.5 text-sm text-slate-400" type="button" (click)="refreshDb()">Refresh</button>
+      </div>
+    </div>
+
+    @if (message()) {
+      <p class="mb-4 text-sm text-cyan-300">{{ message() }}</p>
+    }
+
+    <div class="flex justify-end">
+      <button class="rounded-xl bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950" type="button" (click)="save()">
+        Save
+      </button>
+    </div>
+  </section>
+</div>
