@@ -14,6 +14,15 @@ export const authGuard: CanActivateFn = async (_route, state) => {
   if (auth.isAuthenticated()) {
     return true;
   }
-  await auth.login(state.url || "/app");
-  return false;
+  return router.createUrlTree(["/login"], { queryParams: { returnTo: state.url || "/app" } });
+};
+
+export const guestGuard: CanActivateFn = async () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  await auth.restore();
+  if (auth.isAuthenticated()) {
+    return router.createUrlTree(["/app"]);
+  }
+  return true;
 };

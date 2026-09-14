@@ -1,5 +1,5 @@
 import { Component, inject } from "@angular/core";
-import { RouterLink } from "@angular/router";
+import { Router, RouterLink } from "@angular/router";
 import { AuthService } from "../../core/auth.service";
 import { ConfigService } from "../../core/config.service";
 import { formatBytes } from "../../core/format";
@@ -121,6 +121,7 @@ import { formatBytes } from "../../core/format";
 export class Landing {
   readonly config = inject(ConfigService);
   private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
   readonly bytes = formatBytes;
 
   get starterPrice(): string {
@@ -146,9 +147,9 @@ export class Landing {
 
   start(): void {
     if (this.auth.isAuthenticated()) {
-      window.location.assign("/app");
+      void this.router.navigateByUrl("/app");
       return;
     }
-    void this.auth.signup("/app");
+    void this.router.navigateByUrl("/signup");
   }
 }

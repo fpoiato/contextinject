@@ -79,7 +79,7 @@ export class Terms {}
 
       <h2>What we collect</h2>
       <ul>
-        <li><strong>Account data</strong>: email address and authentication identifiers managed by Amazon Cognito.</li>
+        <li><strong>Account data</strong>: email address and authentication identifiers. Sign-in happens on this site; our API talks to Amazon Cognito on your behalf. Passwords are never stored by the app.</li>
         <li><strong>Documents</strong>: the files you upload, their extracted text and vector embeddings.</li>
         <li><strong>Chat history</strong>: your questions, the generated answers and the passages cited.</li>
         <li><strong>API keys</strong>: the provider keys you choose to store, encrypted in AWS Secrets Manager.</li>
