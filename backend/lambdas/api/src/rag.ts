@@ -8,18 +8,24 @@ export interface RetrievedChunk {
   content: string;
   page: number | null;
   filename: string;
+  documentId: string;
   score: number;
 }
 
 const MODEL_WINDOWS: Record<string, number> = {
-  "openai/gpt-4o-mini": 128000,
-  "openai/gpt-4o": 128000,
-  "anthropic/claude-sonnet-4": 200000,
-  "anthropic/claude-3.5-sonnet": 200000,
-  "google/gemini-2.0-flash-001": 1000000,
-  "google/gemini-flash-1.5": 1000000,
-  "x-ai/grok-2": 131072,
-  "x-ai/grok-beta": 131072,
+  "openai/gpt-5.6-luna": 400000,
+  "openai/gpt-5.6-sol": 400000,
+  "openai/gpt-5.6-terra": 400000,
+  "anthropic/claude-sonnet-5": 1000000,
+  "anthropic/claude-opus-5": 1000000,
+  "anthropic/claude-haiku-4.5": 200000,
+  "google/gemini-3.8-flash": 1000000,
+  "google/gemini-3.5-pro": 1000000,
+  "x-ai/grok-4.6": 256000,
+  "meta-llama/llama-4-maverick": 1000000,
+  "deepseek/deepseek-v4": 128000,
+  "qwen/qwen3.5-235b": 128000,
+  "mistralai/mistral-large-3": 128000,
 };
 
 export function contextLimit(model: string): number {
@@ -54,7 +60,13 @@ export async function embedQuery(text: string): Promise<number[]> {
   return payload.embeddings[0];
 }
 
-export async function searchChunks(userId: string, queryText: string, model: string): Promise<RetrievedChunk[]> {
+export interface SearchScope {
+  userId: string;
+  projectId: string;
+  folderId?: string | null;
+}
+
+export async function searchChunks(scope: SearchScope, queryText: string, model: string): Promise<RetrievedChunk[]> {
   const vector = await embedQuery(queryText);
   const limit = retrievalLimit(model);
   const result = await query<{
@@ -62,27 +74,40 @@ export async function searchChunks(userId: string, queryText: string, model: str
     content: string;
     page: number | null;
     filename: string;
+    document_id: string;
     score: number;
   }>(
     `
+    WITH RECURSIVE scope_folders AS (
+      SELECT id FROM folders WHERE id = $4::uuid AND project_id = $3::uuid
+      UNION ALL
+      SELECT f.id FROM folders f JOIN scope_folders s ON f.parent_id = s.id
+    )
     SELECT
       c.id,
       c.content,
       c.page,
       d.filename,
+      d.id AS document_id,
       (1 - (c.embedding <=> $1::vector)) AS score
     FROM chunks c
     JOIN documents d ON d.id = c.document_id
     WHERE c.embedding IS NOT NULL
       AND d.status = 'ready'
-      AND ($2::text = 'local' OR c.user_id = $2)
+      AND d.user_id = $2
+      AND d.project_id = $3::uuid
+      AND ($4::uuid IS NULL OR d.folder_id IN (SELECT id FROM scope_folders))
     ORDER BY c.embedding <=> $1::vector
-    LIMIT $3
+    LIMIT $5
     `,
-    [toSqlVector(vector), userId, limit],
+    [toSqlVector(vector), scope.userId, scope.projectId, scope.folderId ?? null, limit],
   );
   return result.rows.map((row) => ({
-    ...row,
+    id: row.id,
+    content: row.content,
+    page: row.page,
+    filename: row.filename,
+    documentId: row.document_id,
     score: Number(row.score),
   }));
 }

@@ -14,7 +14,7 @@ export interface ChatChunk {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
-function providerOf(model: string, explicit?: string): string {
+export function providerOf(model: string, explicit?: string): string {
   if (explicit && explicit !== "auto") {
     return explicit;
   }
@@ -69,7 +69,7 @@ export async function* streamChat(request: ChatRequest): AsyncGenerator<ChatChun
   const provider = providerOf(request.model, request.provider);
   const apiKey = apiKeyForProvider(provider, request.apiKey);
   if (!apiKey) {
-    throw new Error("Missing API key. Add one in Settings.");
+    throw new Error(`No API key configured for ${provider}. Add one in Account → API keys.`);
   }
   const model = resolveModelId(modelName(request.model, provider));
   const url = endpointFor(provider, apiKey);

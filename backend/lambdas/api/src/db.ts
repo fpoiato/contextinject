@@ -1,72 +1,6 @@
 import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import pg from "pg";
-
-const SCHEMA_SQL = `
-CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-CREATE TABLE IF NOT EXISTS documents (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id TEXT NOT NULL DEFAULT 'local',
-  filename TEXT NOT NULL,
-  content_type TEXT,
-  s3_key TEXT NOT NULL UNIQUE,
-  status TEXT NOT NULL DEFAULT 'pending',
-  bytes BIGINT,
-  error TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS chunks (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  document_id UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL DEFAULT 'local',
-  chunk_index INT NOT NULL,
-  content TEXT NOT NULL,
-  page INT,
-  embedding vector(768),
-  token_count INT,
-  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS chunks_document_id_idx ON chunks (document_id);
-CREATE INDEX IF NOT EXISTS chunks_user_id_idx ON chunks (user_id);
-
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_indexes WHERE indexname = 'chunks_embedding_hnsw_idx'
-  ) THEN
-    CREATE INDEX chunks_embedding_hnsw_idx
-      ON chunks USING hnsw (embedding vector_cosine_ops);
-  END IF;
-END
-$$;
-
-CREATE TABLE IF NOT EXISTS chat_sessions (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id TEXT NOT NULL DEFAULT 'local',
-  title TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS chat_history (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id UUID NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
-  user_id TEXT NOT NULL DEFAULT 'local',
-  role TEXT NOT NULL,
-  content TEXT NOT NULL,
-  sources JSONB,
-  model TEXT,
-  prompt_tokens INT,
-  completion_tokens INT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS chat_history_session_idx ON chat_history (session_id, created_at);
-`;
+import SCHEMA_SQL from "../../shared/schema.sql";
 
 const { Pool } = pg;
 
@@ -126,31 +60,38 @@ export async function getPool(): Promise<pg.Pool> {
   return pool;
 }
 
+function isConnectivityError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /ECONNREFUSED|timeout|ENOTFOUND|EHOSTUNREACH|ECONNRESET|Connection terminated|stopped|getaddrinfo/i.test(
+    message,
+  );
+}
+
 export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   text: string,
   params: unknown[] = [],
 ): Promise<pg.QueryResult<T>> {
+  let db: pg.Pool;
   try {
-    const db = await getPool();
+    db = await getPool();
     if (!schemaReady) {
-      await ensureSchema(db);
+      await db.query(SCHEMA_SQL);
+      schemaReady = true;
     }
-    return await db.query<T>(text, params);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const stopped = /ECONNREFUSED|timeout|ENOTFOUND|EHOSTUNREACH|Connection terminated|stopped/i.test(
-      message,
-    );
     throw new DatabaseUnavailableError(
       "Database is stopped or unreachable. Start it from Settings.",
-      stopped,
+      isConnectivityError(error),
     );
   }
-}
-
-async function ensureSchema(db: pg.Pool): Promise<void> {
-  await db.query(SCHEMA_SQL);
-  schemaReady = true;
+  try {
+    return await db.query<T>(text, params);
+  } catch (error) {
+    if (isConnectivityError(error)) {
+      throw new DatabaseUnavailableError("Database is stopped or unreachable. Start it from Settings.", true);
+    }
+    throw error;
+  }
 }
 
 export function toSqlVector(values: number[]): string {
