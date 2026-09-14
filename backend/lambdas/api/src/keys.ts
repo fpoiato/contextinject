@@ -58,8 +58,8 @@ async function writeKeys(sub: string, value: KeyMap): Promise<void> {
       new CreateSecretCommand({
         Name: name,
         SecretString,
-        Description: "easyRAG BYOK LLM provider keys",
-        Tags: [{ Key: "easyrag:user", Value: sub }],
+        Description: "contextinject BYOK LLM provider keys",
+        Tags: [{ Key: "contextinject:user", Value: sub }],
       }),
     );
   }

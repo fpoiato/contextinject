@@ -41,7 +41,7 @@ declare const awslambda: {
   };
 };
 
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://easyrag.fpoiato.com";
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://contextinject.fpoiato.com";
 
 function corsHeaders(): Record<string, string> {
   return {
@@ -158,7 +158,7 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
 
   try {
     if (method === "GET" && path === "/health") {
-      writeJson(responseStream, 200, { ok: true, service: "easyrag" });
+      writeJson(responseStream, 200, { ok: true, service: "contextinject" });
       return;
     }
     if (method === "GET" && path === "/config") {

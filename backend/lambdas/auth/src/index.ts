@@ -24,7 +24,12 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyResultV2 } from "aws-lambda
 
 const client = new CognitoIdentityProviderClient({});
 const ALLOWED_ORIGINS = new Set(
-  [process.env.ALLOWED_ORIGIN, "http://localhost:4200"].filter((value): value is string => Boolean(value)),
+  [
+    process.env.ALLOWED_ORIGIN,
+    "https://contextinject.fpoiato.com",
+    "https://easyrag.fpoiato.com",
+    "http://localhost:4200",
+  ].filter((value): value is string => Boolean(value)),
 );
 
 class HttpError extends Error {

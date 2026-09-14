@@ -31,8 +31,8 @@ function headersFor(provider: string, apiKey: string): Record<string, string> {
     Authorization: `Bearer ${apiKey}`,
   };
   if (provider === "openrouter") {
-    headers["HTTP-Referer"] = process.env.ALLOWED_ORIGIN || "https://easyrag.fpoiato.com";
-    headers["X-Title"] = "easyRAG";
+    headers["HTTP-Referer"] = process.env.ALLOWED_ORIGIN || "https://contextinject.fpoiato.com";
+    headers["X-Title"] = "contextinject";
   }
   if (provider === "anthropic") {
     headers["x-api-key"] = apiKey;

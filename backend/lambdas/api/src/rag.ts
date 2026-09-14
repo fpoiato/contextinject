@@ -125,7 +125,7 @@ export function buildRagMessages(
     .join("\n\n");
 
   const system = [
-    "You are easyRAG, a precise assistant that answers using the retrieved document context.",
+    "You are contextinject, a precise assistant that answers using the retrieved document context.",
     "Cite sources as [#n] when you use them. If the context is insufficient, say so clearly.",
     "Reply in the same language as the user question.",
     context ? `Retrieved context:\n${context}` : "No document context was retrieved.",

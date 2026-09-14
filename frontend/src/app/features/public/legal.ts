@@ -9,7 +9,7 @@ import { Component } from "@angular/core";
 
       <h2>1. The service</h2>
       <p>
-        easyRAG ("the Service") lets you upload documents, index them and ask questions about them using third-party
+        contextinject ("the Service") lets you upload documents, index them and ask questions about them using third-party
         language models accessed with API keys you provide. The Service is operated by fpoiato.com ("we", "us").
       </p>
 

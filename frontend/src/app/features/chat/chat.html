@@ -54,7 +54,7 @@
           [class.border]="message.role === 'assistant'"
           [class.border-slate-800]="message.role === 'assistant'"
         >
-          <p class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{{ message.role === "user" ? "You" : "easyRAG" }}</p>
+          <p class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{{ message.role === "user" ? "You" : "contextinject" }}</p>
           @if (message.content) {
             <div class="whitespace-pre-wrap break-words">{{ message.content }}</div>
           } @else if (streaming()) {
