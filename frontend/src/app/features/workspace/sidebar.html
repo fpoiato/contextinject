@@ -103,11 +103,23 @@
         <span class="truncate">{{ row.folder.name }}</span>
         <span class="ml-auto text-[11px] text-slate-500">{{ row.documentCount }}</span>
       </button>
-      <div class="hidden shrink-0 items-center gap-0.5 text-[11px] text-slate-400 group-hover:flex">
-        <button type="button" class="rounded px-1 hover:text-white" title="New subfolder" (click)="newFolder(row.folder.id)">+</button>
-        <button type="button" class="rounded px-1 hover:text-white" title="Rename" (click)="renameFolder(row.folder)">✎</button>
-        <button type="button" class="rounded px-1 hover:text-white" title="Move" (click)="movingFolder.set(movingFolder() === row.folder.id ? null : row.folder.id)">⇄</button>
-        <button type="button" class="rounded px-1 hover:text-rose-300" title="Delete" (click)="deleteFolder(row.folder)">✕</button>
+      <div class="relative shrink-0">
+        <button
+          type="button"
+          class="rounded px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-800 hover:text-white"
+          title="Folder actions"
+          (click)="toggleMenu('folder:' + row.folder.id)"
+        >
+          ⋯
+        </button>
+        @if (menuFor() === 'folder:' + row.folder.id) {
+          <div class="absolute right-0 z-20 mt-1 w-40 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 text-sm shadow-xl" (click)="menuFor.set(null)">
+            <button type="button" class="block w-full px-3 py-2 text-left hover:bg-slate-800" (click)="newFolder(row.folder.id)">New subfolder</button>
+            <button type="button" class="block w-full px-3 py-2 text-left hover:bg-slate-800" (click)="renameFolder(row.folder)">Rename</button>
+            <button type="button" class="block w-full px-3 py-2 text-left hover:bg-slate-800" (click)="movingFolder.set(row.folder.id)">Move to…</button>
+            <button type="button" class="block w-full px-3 py-2 text-left text-rose-300 hover:bg-slate-800" (click)="deleteFolder(row.folder)">Delete</button>
+          </div>
+        }
       </div>
     </div>
     @if (movingFolder() === row.folder.id) {
@@ -139,23 +151,33 @@
   </div>
 
   @for (doc of store.visibleDocuments(); track doc.id) {
-    <article class="group rounded-xl px-2 py-1.5 hover:bg-slate-900">
+    <article class="rounded-xl px-2 py-1.5 hover:bg-slate-900">
       <div class="flex items-center gap-2">
         <span class="min-w-0 flex-1 truncate text-sm" [title]="doc.filename">{{ doc.filename }}</span>
         <span class="rounded-full px-1.5 py-0.5 text-[10px] uppercase" [class]="statusClass(doc.status)">{{ doc.status }}</span>
-      </div>
-      <div class="mt-0.5 flex items-center justify-between text-[11px] text-slate-500">
-        <span>
-          {{ bytes(doc.bytes) }}
-          @if (!store.currentFolderId() && doc.folderId) {
-            · {{ store.folderPath(doc.folderId).at(-1)?.name }}
+        <div class="relative shrink-0">
+          <button
+            type="button"
+            class="rounded px-1.5 py-0.5 text-xs text-slate-500 hover:bg-slate-800 hover:text-white"
+            title="Document actions"
+            (click)="toggleMenu('doc:' + doc.id)"
+          >
+            ⋯
+          </button>
+          @if (menuFor() === 'doc:' + doc.id) {
+            <div class="absolute right-0 z-20 mt-1 w-36 overflow-hidden rounded-xl border border-slate-800 bg-slate-900 text-sm shadow-xl" (click)="menuFor.set(null)">
+              <button type="button" class="block w-full px-3 py-2 text-left hover:bg-slate-800" (click)="renameDocument(doc)">Rename</button>
+              <button type="button" class="block w-full px-3 py-2 text-left hover:bg-slate-800" (click)="movingDocument.set(doc.id)">Move to…</button>
+              <button type="button" class="block w-full px-3 py-2 text-left text-rose-300 hover:bg-slate-800" (click)="deleteDocument(doc)">Delete</button>
+            </div>
           }
-        </span>
-        <span class="hidden items-center gap-0.5 group-hover:flex">
-          <button type="button" class="rounded px-1 hover:text-white" title="Rename" (click)="renameDocument(doc)">✎</button>
-          <button type="button" class="rounded px-1 hover:text-white" title="Move" (click)="movingDocument.set(movingDocument() === doc.id ? null : doc.id)">⇄</button>
-          <button type="button" class="rounded px-1 hover:text-rose-300" title="Delete" (click)="deleteDocument(doc)">✕</button>
-        </span>
+        </div>
+      </div>
+      <div class="mt-0.5 text-[11px] text-slate-500">
+        {{ bytes(doc.bytes) }}
+        @if (!store.currentFolderId() && doc.folderId) {
+          · {{ store.folderPath(doc.folderId).at(-1)?.name }}
+        }
       </div>
       @if (doc.error) {
         <p class="mt-1 break-words text-[11px] text-rose-300">{{ doc.error }}</p>

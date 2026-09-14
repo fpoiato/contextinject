@@ -30,6 +30,11 @@ export class Sidebar {
   readonly expanded = signal<Set<string>>(new Set());
   readonly movingDocument = signal<string | null>(null);
   readonly movingFolder = signal<string | null>(null);
+  readonly menuFor = signal<string | null>(null);
+
+  toggleMenu(id: string): void {
+    this.menuFor.update((current) => (current === id ? null : id));
+  }
 
   readonly tree = computed<TreeRow[]>(() => {
     const folders = this.store.folders();
