@@ -1,6 +1,6 @@
 import { Component, EventEmitter, Output, inject, signal } from "@angular/core";
 import { FormsModule } from "@angular/forms";
-import { MODEL_OPTIONS, SettingsService } from "../../core/settings.service";
+import { SettingsService, modelsForProvider } from "../../core/settings.service";
 import { ApiService } from "../../core/api.service";
 
 @Component({
@@ -14,7 +14,6 @@ export class Settings {
 
   @Output() readonly closed = new EventEmitter<void>();
 
-  readonly models = MODEL_OPTIONS;
   apiKey = this.settingsService.settings().apiKey;
   provider = this.settingsService.settings().provider;
   model = this.settingsService.settings().model;
@@ -25,6 +24,22 @@ export class Settings {
 
   constructor() {
     this.refreshDb();
+    this.ensureModelForProvider();
+  }
+
+  models(): ReturnType<typeof modelsForProvider> {
+    return modelsForProvider(this.provider);
+  }
+
+  onProviderChange(): void {
+    this.ensureModelForProvider();
+  }
+
+  private ensureModelForProvider(): void {
+    const options = this.models();
+    if (!options.some((item) => item.id === this.model)) {
+      this.model = options[0]?.id ?? this.model;
+    }
   }
 
   save(): void {
