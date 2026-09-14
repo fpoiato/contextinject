@@ -208,7 +208,12 @@ export class EasyRagStack extends Stack {
         DB_INSTANCE_ID: database.instanceIdentifier,
         ALLOWED_ORIGIN: `https://${APP_DOMAIN}`,
         OPENROUTER_API_KEY: process.env.openrouter || process.env.OPENROUTER || process.env.OPENROUTER_API_KEY || "",
-        ANTHROPIC_API_KEY: process.env.anthropic || process.env.ANTHROPIC || process.env.ANTHROPIC_API_KEY || "",
+        ANTHROPIC_API_KEY:
+          process.env.anthropic ||
+          process.env.anthropic_key ||
+          process.env.ANTHROPIC ||
+          process.env.ANTHROPIC_API_KEY ||
+          "",
       },
     });
 
