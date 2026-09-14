@@ -459,8 +459,9 @@ function handler(event) {
   var host = request.headers.host.value;
   if (host === '${LEGACY_APP_DOMAIN}') {
     var location = 'https://${APP_DOMAIN}' + request.uri;
-    if (request.querystring) {
-      location += '?' + request.querystring;
+    var qs = request.querystring;
+    if (typeof qs === 'string' && qs.length > 0) {
+      location += '?' + qs;
     }
     return {
       statusCode: 301,
