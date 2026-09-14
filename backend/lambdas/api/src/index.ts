@@ -233,7 +233,7 @@ async function handleChat(event: APIGatewayProxyEventV2, responseStream: NodeJS.
     return;
   }
   const uid = userId(event);
-  const model = String(body.model || header(event, "x-model") || "openai/gpt-4o-mini");
+  const model = String(body.model || header(event, "x-model") || "openai/gpt-5.6-luna");
   const provider = String(body.provider || header(event, "x-provider") || "openrouter");
   const apiKey = String(body.apiKey || header(event, "x-api-key") || "");
   let sessionId = String(body.sessionId || "");

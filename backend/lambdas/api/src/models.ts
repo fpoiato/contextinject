@@ -1,4 +1,4 @@
-/** Retired Claude IDs that the Anthropic API now returns as 404 not_found_error. */
+/** Retired or removed IDs that now 404 at the provider. */
 export const RETIRED_MODEL_ALIASES: Record<string, string> = {
   "claude-sonnet-4-20250514": "claude-sonnet-5",
   "claude-opus-4-20250514": "claude-opus-5",
@@ -14,6 +14,12 @@ export const RETIRED_MODEL_ALIASES: Record<string, string> = {
   "anthropic/claude-3.5-sonnet": "anthropic/claude-sonnet-5",
   "anthropic/claude-sonnet-4": "anthropic/claude-sonnet-5",
   "anthropic/claude-3-haiku": "anthropic/claude-haiku-4.5",
+  "google/gemini-2.0-flash-001": "google/gemini-3.8-flash",
+  "gemini-2.0-flash": "gemini-3.8-flash",
+  "x-ai/grok-2": "x-ai/grok-4.6",
+  "x-ai/grok-3-beta": "x-ai/grok-4.6",
+  "grok-2": "grok-4.6",
+  "grok-3": "grok-4.6",
 };
 
 export function resolveModelId(model: string): string {
