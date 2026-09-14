@@ -1,0 +1,76 @@
+<div class="flex h-full min-h-0 flex-col">
+  <div class="mb-3 flex items-center justify-between">
+    <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Chat</h2>
+    <button class="text-xs text-cyan-300 hover:text-cyan-200" type="button" (click)="newChat()">New conversation</button>
+  </div>
+
+  <div class="mb-3 flex gap-2 overflow-x-auto pb-1">
+    @for (session of sessions(); track session.id) {
+      <button
+        class="whitespace-nowrap rounded-full border px-3 py-1 text-xs"
+        [class.border-cyan-400]="session.id === sessionId()"
+        [class.text-cyan-200]="session.id === sessionId()"
+        [class.border-slate-800]="session.id !== sessionId()"
+        type="button"
+        (click)="openSession(session.id)"
+      >
+        {{ session.title || "Untitled" }}
+      </button>
+    }
+  </div>
+
+  <div class="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+    @for (message of messages(); track $index) {
+      <article
+        class="max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6"
+        [class.ml-auto]="message.role === 'user'"
+        [class.bg-cyan-500/15]="message.role === 'user'"
+        [class.bg-slate-900]="message.role === 'assistant'"
+        [class.border]="message.role === 'assistant'"
+        [class.border-slate-800]="message.role === 'assistant'"
+      >
+        <p class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{{ message.role }}</p>
+        <div class="whitespace-pre-wrap">{{ message.content }}</div>
+      </article>
+    } @empty {
+      <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 text-sm text-slate-400">
+        Ask a question about your documents. easyRAG retrieves pgvector chunks and cites the sources used.
+      </div>
+    }
+  </div>
+
+  @if (error()) {
+    <p class="mt-3 text-sm text-rose-400">{{ error() }}</p>
+  }
+
+  @if (sources().length) {
+    <details class="mt-3 rounded-2xl border border-slate-800 bg-slate-950/80 p-3">
+      <summary class="cursor-pointer text-sm font-medium text-slate-300">Retrieved sources ({{ sources().length }})</summary>
+      <div class="mt-3 space-y-2">
+        @for (source of sources(); track source.id; let i = $index) {
+          <article class="rounded-xl bg-slate-900 p-3 text-xs text-slate-300">
+            <p class="mb-1 font-medium text-slate-200">[#{{ i + 1 }}] {{ source.filename }} @if (source.page) {· p.{{ source.page }}}</p>
+            <p class="line-clamp-5 whitespace-pre-wrap">{{ source.content }}</p>
+          </article>
+        }
+      </div>
+    </details>
+  }
+
+  <form class="mt-3 flex gap-2" (submit)="$event.preventDefault(); send()">
+    <input
+      class="flex-1 rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm outline-none ring-cyan-500/40 focus:ring"
+      [(ngModel)]="draft"
+      name="draft"
+      [disabled]="streaming()"
+      placeholder="Ask your knowledge base..."
+    />
+    <button
+      class="rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 disabled:opacity-50"
+      type="submit"
+      [disabled]="streaming()"
+    >
+      {{ streaming() ? "..." : "Send" }}
+    </button>
+  </form>
+</div>
