@@ -24,6 +24,8 @@ import {
   aws_scheduler as scheduler,
   aws_scheduler_targets as schedulerTargets,
 } from "aws-cdk-lib";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
 import { Construct } from "constructs";
 
 const APP_DOMAIN = "easyrag.fpoiato.com";
@@ -315,6 +317,76 @@ export class EasyRagStack extends Stack {
     apiFn.addToRolePolicy(rdsControlPolicy);
     stopFn.addToRolePolicy(rdsControlPolicy);
 
+    const authFn = new lambdaNodejs.NodejsFunction(this, "AuthFn", {
+      entry: path.join(__dirname, "../../lambdas/auth/src/index.ts"),
+      projectRoot: path.join(__dirname, "../../lambdas/auth"),
+      depsLockFilePath: path.join(__dirname, "../../lambdas/auth/package-lock.json"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      timeout: Duration.seconds(15),
+      memorySize: 256,
+      logRetention: commonLogRetention,
+      bundling: {
+        minify: true,
+        sourceMap: false,
+        target: "node22",
+        format: lambdaNodejs.OutputFormat.CJS,
+        externalModules: [],
+      },
+      environment: {
+        ALLOWED_ORIGIN: `https://${APP_DOMAIN}`,
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+      },
+    });
+    authFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "cognito-idp:AdminInitiateAuth",
+          "cognito-idp:AdminRespondToAuthChallenge",
+          "cognito-idp:AdminUserGlobalSignOut",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:SignUp",
+          "cognito-idp:ConfirmSignUp",
+          "cognito-idp:ResendConfirmationCode",
+          "cognito-idp:ForgotPassword",
+          "cognito-idp:ConfirmForgotPassword",
+          "cognito-idp:RevokeToken",
+        ],
+        resources: [userPool.userPoolArn, `${userPool.userPoolArn}/*`],
+      }),
+    );
+    authFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "cognito-idp:SignUp",
+          "cognito-idp:ConfirmSignUp",
+          "cognito-idp:ResendConfirmationCode",
+          "cognito-idp:ForgotPassword",
+          "cognito-idp:ConfirmForgotPassword",
+          "cognito-idp:RevokeToken",
+        ],
+        resources: ["*"],
+      }),
+    );
+
+    const authApi = new apigwv2.HttpApi(this, "AuthHttpApi", {
+      apiName: "easyrag-auth",
+      corsPreflight: {
+        allowHeaders: ["content-type", "authorization"],
+        allowMethods: [apigwv2.CorsHttpMethod.POST, apigwv2.CorsHttpMethod.OPTIONS],
+        allowOrigins: [`https://${APP_DOMAIN}`, LOCAL_ORIGIN],
+        maxAge: Duration.hours(24),
+      },
+    });
+    const authIntegration = new HttpLambdaIntegration("AuthIntegration", authFn);
+    authApi.addRoutes({
+      path: "/auth/{proxy+}",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: authIntegration,
+    });
+
     new scheduler.Schedule(this, "StopRdsNightly", {
       description: "Stop easyRAG RDS every night; start it manually when needed",
       schedule: scheduler.ScheduleExpression.cron({
@@ -389,6 +461,18 @@ export class EasyRagStack extends Stack {
       certificate,
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+      additionalBehaviors: {
+        "/auth*": {
+          origin: new origins.HttpOrigin(`${authApi.apiId}.execute-api.${this.region}.amazonaws.com`, {
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          responseHeadersPolicy: apiCorsPolicy,
+        },
+      },
       defaultBehavior: {
         origin: new origins.FunctionUrlOrigin(apiUrl),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -426,5 +510,6 @@ export class EasyRagStack extends Stack {
     new CfnOutput(this, "UserPoolId", { value: userPool.userPoolId });
     new CfnOutput(this, "UserPoolClientId", { value: userPoolClient.userPoolClientId });
     new CfnOutput(this, "CognitoDomain", { value: userPoolDomain.baseUrl() });
+    new CfnOutput(this, "AuthApiUrl", { value: `${authApi.apiEndpoint}/auth` });
   }
 }

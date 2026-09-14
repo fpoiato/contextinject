@@ -20,10 +20,10 @@ import { ConfigService } from "../../core/config.service";
             @if (auth.isAuthenticated()) {
               <a routerLink="/app" class="rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-950 hover:bg-cyan-300">Open workspace</a>
             } @else {
-              <button type="button" class="hover:text-white" (click)="signIn()">Sign in</button>
-              <button type="button" class="rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-950 hover:bg-cyan-300" (click)="signUp()">
+              <a routerLink="/login" class="hover:text-white">Sign in</a>
+              <a routerLink="/signup" class="rounded-xl bg-cyan-400 px-4 py-2 font-semibold text-slate-950 hover:bg-cyan-300">
                 Get started
-              </button>
+              </a>
             }
           </nav>
           <button type="button" class="rounded-lg border border-slate-800 px-3 py-1.5 text-sm md:hidden" (click)="menuOpen.set(!menuOpen())">
@@ -38,8 +38,8 @@ import { ConfigService } from "../../core/config.service";
               @if (auth.isAuthenticated()) {
                 <a routerLink="/app" class="font-semibold text-cyan-300">Open workspace</a>
               } @else {
-                <button type="button" class="text-left" (click)="signIn()">Sign in</button>
-                <button type="button" class="text-left font-semibold text-cyan-300" (click)="signUp()">Get started</button>
+                <a routerLink="/login" (click)="menuOpen.set(false)">Sign in</a>
+                <a routerLink="/signup" class="font-semibold text-cyan-300" (click)="menuOpen.set(false)">Get started</a>
               }
             </div>
           </div>
@@ -80,13 +80,5 @@ export class PublicShell {
     if (this.config.config()) {
       void this.auth.restore();
     }
-  }
-
-  signIn(): void {
-    void this.auth.login("/app");
-  }
-
-  signUp(): void {
-    void this.auth.signup("/app");
   }
 }

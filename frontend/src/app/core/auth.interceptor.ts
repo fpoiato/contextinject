@@ -4,8 +4,12 @@ import { from, switchMap, throwError, catchError } from "rxjs";
 import { AuthService } from "./auth.service";
 import { environment } from "./environment";
 
+function isPublicApi(url: string): boolean {
+  return url.endsWith("/config") || url.endsWith("/health") || url.includes("/auth/");
+}
+
 export const authInterceptor: HttpInterceptorFn = (request, next) => {
-  if (!request.url.startsWith(environment.apiUrl) || request.url.endsWith("/config")) {
+  if (!request.url.startsWith(environment.apiUrl) || isPublicApi(request.url)) {
     return next(request);
   }
   const auth = inject(AuthService);
@@ -16,7 +20,7 @@ export const authInterceptor: HttpInterceptorFn = (request, next) => {
     }),
     catchError((error: unknown) => {
       if (error instanceof HttpErrorResponse && error.status === 401) {
-        void auth.login(window.location.pathname);
+        auth.goToLogin(window.location.pathname);
       }
       return throwError(() => error);
     }),

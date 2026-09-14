@@ -1,118 +1,208 @@
 import { Injectable, computed, inject, signal } from "@angular/core";
-import { OidcClient, User, UserManager, WebStorageStateStore } from "oidc-client-ts";
-import { ConfigService } from "./config.service";
+import { Router } from "@angular/router";
+import { environment } from "./environment";
 
-const RETURN_KEY = "easyrag.returnTo";
+const STORAGE_KEY = "easyrag.session";
+
+export interface AuthSession {
+  idToken: string;
+  accessToken: string;
+  refreshToken: string | null;
+  expiresAt: number;
+  sub: string;
+  email: string;
+  groups: string[];
+}
+
+export interface AuthChallenge {
+  challenge: "NEW_PASSWORD_REQUIRED";
+  session: string;
+  email: string;
+}
+
+interface AuthApiError {
+  error?: string;
+  code?: string;
+}
 
 @Injectable({ providedIn: "root" })
 export class AuthService {
-  private readonly config = inject(ConfigService);
-  private manager: UserManager | null = null;
-  private readonly userState = signal<User | null>(null);
-  private ready: Promise<void> | null = null;
+  private readonly router = inject(Router);
+  private readonly sessionState = signal<AuthSession | null>(null);
+  private refreshInFlight: Promise<string | null> | null = null;
+  private restored = false;
 
-  readonly user = this.userState.asReadonly();
+  readonly user = this.sessionState.asReadonly();
   readonly isAuthenticated = computed(() => {
-    const current = this.userState();
-    return !!current && !current.expired;
+    const current = this.sessionState();
+    return !!current && current.expiresAt > Date.now() + 15_000;
   });
-  readonly email = computed(() => String(this.userState()?.profile?.email ?? ""));
-  readonly isAdmin = computed(() => {
-    const groups = this.userState()?.profile?.["cognito:groups"];
-    return Array.isArray(groups) && groups.includes("admin");
-  });
+  readonly email = computed(() => this.sessionState()?.email ?? "");
+  readonly isAdmin = computed(() => this.sessionState()?.groups.includes("admin") ?? false);
 
-  private getManager(): UserManager {
-    if (this.manager) {
-      return this.manager;
-    }
-    const cfg = this.config.require();
-    const origin = window.location.origin;
-    this.manager = new UserManager({
-      authority: `https://cognito-idp.${cfg.region}.amazonaws.com/${cfg.userPoolId}`,
-      client_id: cfg.clientId,
-      redirect_uri: `${origin}/auth/callback`,
-      post_logout_redirect_uri: `${origin}/`,
-      response_type: "code",
-      scope: "openid email profile",
-      loadUserInfo: false,
-      automaticSilentRenew: true,
-      userStore: new WebStorageStateStore({ store: window.localStorage }),
-      metadataSeed: { end_session_endpoint: `${cfg.domain}/logout` },
-    });
-    this.manager.events.addUserLoaded((user) => this.userState.set(user));
-    this.manager.events.addUserUnloaded(() => this.userState.set(null));
-    this.manager.events.addAccessTokenExpired(() => {
-      void this.manager?.signinSilent().catch(() => this.userState.set(null));
-    });
-    return this.manager;
-  }
-
-  /** Restores a persisted session; safe to call many times. */
   restore(): Promise<void> {
-    if (!this.ready) {
-      this.ready = (async () => {
-        try {
-          const user = await this.getManager().getUser();
-          if (user && user.expired && user.refresh_token) {
-            const renewed = await this.getManager().signinSilent().catch(() => null);
-            this.userState.set(renewed);
-          } else {
-            this.userState.set(user);
-          }
-        } catch {
-          this.userState.set(null);
-        }
-      })();
+    if (this.restored) {
+      return Promise.resolve();
     }
-    return this.ready;
-  }
-
-  async login(returnTo = "/app"): Promise<void> {
-    sessionStorage.setItem(RETURN_KEY, returnTo);
-    await this.getManager().signinRedirect();
-  }
-
-  async signup(returnTo = "/app"): Promise<void> {
-    sessionStorage.setItem(RETURN_KEY, returnTo);
-    const cfg = this.config.require();
-    const manager = this.getManager();
-    // Cognito Managed Login exposes sign-up as a separate endpoint; reuse the OIDC state so the callback still works.
-    const request = await new OidcClient(manager.settings).createSigninRequest({ request_type: "si:r" });
-    const url = new URL(request.url);
-    const target = new URL(`${cfg.domain}/signup`);
-    url.searchParams.forEach((value, key) => target.searchParams.set(key, value));
-    window.location.assign(target.toString());
-  }
-
-  async completeLogin(): Promise<string> {
-    const user = await this.getManager().signinCallback();
-    if (user) {
-      this.userState.set(user);
+    this.restored = true;
+    const stored = this.readStore();
+    if (!stored) {
+      this.sessionState.set(null);
+      return Promise.resolve();
     }
-    const returnTo = sessionStorage.getItem(RETURN_KEY) || "/app";
-    sessionStorage.removeItem(RETURN_KEY);
-    return returnTo;
+    this.sessionState.set(stored);
+    if (stored.expiresAt <= Date.now() + 60_000) {
+      return this.idToken().then(() => undefined);
+    }
+    return Promise.resolve();
+  }
+
+  async login(email: string, password: string): Promise<AuthSession | AuthChallenge> {
+    const payload = await this.post("/auth/login", { email, password });
+    if (payload.challenge === "NEW_PASSWORD_REQUIRED") {
+      return {
+        challenge: "NEW_PASSWORD_REQUIRED",
+        session: String(payload.session ?? ""),
+        email: String(payload.email ?? email),
+      };
+    }
+    return this.persist(payload);
+  }
+
+  async completeChallenge(email: string, session: string, newPassword: string): Promise<AuthSession> {
+    return this.persist(await this.post("/auth/challenge", { email, session, newPassword }));
+  }
+
+  async signup(email: string, password: string): Promise<{ email: string }> {
+    const payload = await this.post("/auth/signup", { email, password });
+    return { email: String(payload.email ?? email) };
+  }
+
+  async confirm(email: string, code: string): Promise<void> {
+    await this.post("/auth/confirm", { email, code });
+  }
+
+  async resend(email: string): Promise<void> {
+    await this.post("/auth/resend", { email });
+  }
+
+  async forgot(email: string): Promise<void> {
+    await this.post("/auth/forgot", { email });
+  }
+
+  async resetPassword(email: string, code: string, password: string): Promise<void> {
+    await this.post("/auth/reset", { email, code, password });
   }
 
   async logout(): Promise<void> {
-    const cfg = this.config.require();
-    const manager = this.getManager();
-    await manager.removeUser();
-    this.userState.set(null);
-    const logoutUrl = new URL(`${cfg.domain}/logout`);
-    logoutUrl.searchParams.set("client_id", cfg.clientId);
-    logoutUrl.searchParams.set("logout_uri", `${window.location.origin}/`);
-    window.location.assign(logoutUrl.toString());
+    const current = this.sessionState();
+    try {
+      await this.post("/auth/logout", {
+        refreshToken: current?.refreshToken,
+        accessToken: current?.accessToken,
+      });
+    } catch {
+      // local sign-out still proceeds
+    }
+    this.clear();
+    await this.router.navigateByUrl("/");
   }
 
   async idToken(): Promise<string | null> {
     await this.restore();
-    let current = this.userState();
-    if (current?.expired) {
-      current = await this.getManager().signinSilent().catch(() => null);
-      this.userState.set(current);
+    const current = this.sessionState();
+    if (!current) {
+      return null;
     }
-    return current?.id_token ?? null;
+    if (current.expiresAt > Date.now() + 60_000) {
+      return current.idToken;
+    }
+    if (!current.refreshToken) {
+      this.clear();
+      return null;
+    }
+    if (!this.refreshInFlight) {
+      this.refreshInFlight = this.refresh(current.refreshToken).finally(() => {
+        this.refreshInFlight = null;
+      });
+    }
+    return this.refreshInFlight;
+  }
+
+  goToLogin(returnTo = "/app"): void {
+    const tree = this.router.createUrlTree(["/login"], { queryParams: { returnTo } });
+    void this.router.navigateByUrl(tree);
+  }
+
+  private async refresh(refreshToken: string): Promise<string | null> {
+    try {
+      const session = this.persist(await this.post("/auth/refresh", { refreshToken }));
+      return session.idToken;
+    } catch {
+      this.clear();
+      return null;
+    }
+  }
+
+  private persist(payload: Record<string, unknown>): AuthSession {
+    const idToken = String(payload.idToken ?? "");
+    const accessToken = String(payload.accessToken ?? "");
+    if (!idToken || !accessToken) {
+      throw new Error("Sign-in did not return a session");
+    }
+    const expiresIn = Number(payload.expiresIn ?? 3600);
+    const session: AuthSession = {
+      idToken,
+      accessToken,
+      refreshToken: payload.refreshToken ? String(payload.refreshToken) : this.sessionState()?.refreshToken ?? null,
+      expiresAt: Date.now() + Math.max(expiresIn - 30, 60) * 1000,
+      sub: String(payload.sub ?? ""),
+      email: String(payload.email ?? ""),
+      groups: Array.isArray(payload.groups) ? payload.groups.map(String) : [],
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    this.sessionState.set(session);
+    return session;
+  }
+
+  private clear(): void {
+    localStorage.removeItem(STORAGE_KEY);
+    this.sessionState.set(null);
+  }
+
+  private readStore(): AuthSession | null {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        return null;
+      }
+      const parsed = JSON.parse(raw) as AuthSession;
+      if (!parsed.idToken || !parsed.expiresAt) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  private async post(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+    const response = await fetch(`${environment.apiUrl}${path}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    let payload: AuthApiError & Record<string, unknown> = {};
+    try {
+      payload = (await response.json()) as AuthApiError & Record<string, unknown>;
+    } catch {
+      payload = {};
+    }
+    if (!response.ok) {
+      const error = new Error(payload.error || `Request failed (${response.status})`) as Error & { code?: string };
+      error.code = payload.code;
+      throw error;
+    }
+    return payload;
   }
 }
