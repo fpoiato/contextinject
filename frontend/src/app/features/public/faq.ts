@@ -7,7 +7,7 @@ import { RouterLink } from "@angular/router";
   template: `
     <section class="mx-auto max-w-3xl px-5 py-16">
       <h1 class="text-4xl font-semibold tracking-tight">Frequently asked questions</h1>
-      <p class="mt-4 text-slate-300">Everything about how easyRAG handles your documents, keys and billing.</p>
+      <p class="mt-4 text-slate-300">Everything about how contextinject handles your documents, keys and billing.</p>
 
       <div class="mt-10 divide-y divide-slate-800 rounded-3xl border border-slate-800 bg-slate-900/40">
         @for (item of items; track item.q) {
@@ -44,7 +44,7 @@ export class Faq {
     },
     {
       q: "Do you charge for model tokens?",
-      a: "No. Your provider bills you directly for the tokens used with your key. easyRAG only charges the monthly subscription for stored documents.",
+      a: "No. Your provider bills you directly for the tokens used with your key. contextinject only charges the monthly subscription for stored documents.",
     },
     {
       q: "Which models can I use?",

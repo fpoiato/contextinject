@@ -2,7 +2,8 @@ import { Injectable, computed, inject, signal } from "@angular/core";
 import { Router } from "@angular/router";
 import { environment } from "./environment";
 
-const STORAGE_KEY = "easyrag.session";
+const STORAGE_KEY = "contextinject.session";
+const LEGACY_STORAGE_KEY = "easyrag.session";
 
 export interface AuthSession {
   idToken: string;
@@ -23,6 +24,18 @@ export interface AuthChallenge {
 interface AuthApiError {
   error?: string;
   code?: string;
+}
+
+interface AuthPayload extends AuthApiError {
+  challenge?: string;
+  session?: string;
+  email?: string;
+  idToken?: string;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresIn?: number;
+  sub?: string;
+  groups?: unknown;
 }
 
 @Injectable({ providedIn: "root" })
@@ -144,7 +157,7 @@ export class AuthService {
     }
   }
 
-  private persist(payload: Record<string, unknown>): AuthSession {
+  private persist(payload: AuthPayload): AuthSession {
     const idToken = String(payload.idToken ?? "");
     const accessToken = String(payload.accessToken ?? "");
     if (!idToken || !accessToken) {
@@ -161,18 +174,20 @@ export class AuthService {
       groups: Array.isArray(payload.groups) ? payload.groups.map(String) : [],
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     this.sessionState.set(session);
     return session;
   }
 
   private clear(): void {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     this.sessionState.set(null);
   }
 
   private readStore(): AuthSession | null {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
       if (!raw) {
         return null;
       }
@@ -186,15 +201,15 @@ export class AuthService {
     }
   }
 
-  private async post(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  private async post(path: string, body: Record<string, unknown>): Promise<AuthPayload> {
     const response = await fetch(`${environment.apiUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    let payload: AuthApiError & Record<string, unknown> = {};
+    let payload: AuthPayload = {};
     try {
-      payload = (await response.json()) as AuthApiError & Record<string, unknown>;
+      payload = (await response.json()) as AuthPayload;
     } catch {
       payload = {};
     }

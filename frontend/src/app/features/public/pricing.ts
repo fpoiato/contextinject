@@ -62,7 +62,7 @@ import { formatBytes } from "../../core/format";
           <h2 class="text-lg font-semibold">More than 200 GB?</h2>
           <p class="mt-1 text-sm text-slate-400">We set up dedicated capacity, custom retention and invoicing for larger libraries.</p>
         </div>
-        <a href="mailto:hello@fpoiato.com?subject=easyRAG%20enterprise" class="rounded-xl border border-slate-700 px-5 py-3 text-sm font-medium hover:border-slate-500">
+        <a href="mailto:hello@fpoiato.com?subject=contextinject%20enterprise" class="rounded-xl border border-slate-700 px-5 py-3 text-sm font-medium hover:border-slate-500">
           Contact us
         </a>
       </div>
@@ -78,7 +78,7 @@ import { formatBytes } from "../../core/format";
         <div>
           <h3 class="font-semibold">How are model costs billed?</h3>
           <p class="mt-2 text-sm leading-6 text-slate-400">
-            Directly by OpenAI, Anthropic, Google, xAI or OpenRouter to the key you provide. easyRAG adds no markup and never
+            Directly by OpenAI, Anthropic, Google, xAI or OpenRouter to the key you provide. contextinject adds no markup and never
             sees your invoices.
           </p>
         </div>

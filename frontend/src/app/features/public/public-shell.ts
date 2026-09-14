@@ -11,8 +11,8 @@ import { ConfigService } from "../../core/config.service";
       <header class="sticky top-0 z-40 border-b border-slate-800/80 bg-slate-950/80 backdrop-blur">
         <div class="mx-auto flex max-w-6xl items-center justify-between px-5 py-4">
           <a routerLink="/" class="flex items-center gap-2">
-            <span class="grid h-8 w-8 place-items-center rounded-lg bg-cyan-400 font-bold text-slate-950">e</span>
-            <span class="text-lg font-semibold tracking-tight">easyRAG</span>
+            <span class="grid h-8 w-8 place-items-center rounded-lg bg-cyan-400 font-bold text-slate-950">c</span>
+            <span class="text-lg font-semibold tracking-tight">contextinject</span>
           </a>
           <nav class="hidden items-center gap-6 text-sm text-slate-300 md:flex">
             <a routerLink="/pricing" routerLinkActive="text-white" class="hover:text-white">Pricing</a>
@@ -58,7 +58,7 @@ import { ConfigService } from "../../core/config.service";
 
       <footer class="border-t border-slate-800/80">
         <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-5 py-8 text-sm text-slate-400 md:flex-row">
-          <p>© {{ year }} easyRAG. Bring your own model key; keep your documents private.</p>
+          <p>© {{ year }} contextinject. Bring your own model key; keep your documents private.</p>
           <nav class="flex gap-5">
             <a routerLink="/pricing" class="hover:text-white">Pricing</a>
             <a routerLink="/faq" class="hover:text-white">FAQ</a>

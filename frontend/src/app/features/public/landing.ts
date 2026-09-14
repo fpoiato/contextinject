@@ -19,7 +19,7 @@ import { formatBytes } from "../../core/format";
             Ask questions. Get answers grounded in <span class="text-cyan-300">your</span> files.
           </h1>
           <p class="mt-5 max-w-xl text-lg text-slate-300">
-            Upload PDFs, notes and spreadsheets into projects and folders. easyRAG indexes them with vector search and lets
+            Upload PDFs, notes and spreadsheets into projects and folders. contextinject indexes them with vector search and lets
             you chat with any frontier model using your own API key.
           </p>
           <div class="mt-8 flex flex-wrap gap-3">

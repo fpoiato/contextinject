@@ -2,7 +2,8 @@ import { Injectable, computed, inject, signal } from "@angular/core";
 import { firstValueFrom } from "rxjs";
 import { ApiService, describeError, type DocumentItem, type Folder, type Me, type Project } from "./api.service";
 
-const LAST_PROJECT_KEY = "easyrag.lastProject";
+const LAST_PROJECT_KEY = "contextinject.lastProject";
+const LEGACY_LAST_PROJECT_KEY = "easyrag.lastProject";
 
 @Injectable({ providedIn: "root" })
 export class WorkspaceStore {
@@ -69,7 +70,7 @@ export class WorkspaceStore {
       this.me.set(me);
       this.dbStopped.set(false);
       this.projects.set(projects.projects);
-      const remembered = localStorage.getItem(LAST_PROJECT_KEY);
+      const remembered = localStorage.getItem(LAST_PROJECT_KEY) ?? localStorage.getItem(LEGACY_LAST_PROJECT_KEY);
       const initial = projects.projects.find((item) => item.id === remembered) ?? projects.projects[0] ?? null;
       if (initial) {
         await this.selectProject(initial.id);
@@ -102,6 +103,7 @@ export class WorkspaceStore {
     this.currentProjectId.set(projectId);
     this.currentFolderId.set(null);
     localStorage.setItem(LAST_PROJECT_KEY, projectId);
+    localStorage.removeItem(LEGACY_LAST_PROJECT_KEY);
     await this.refreshTree();
   }
 

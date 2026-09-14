@@ -6,7 +6,8 @@ export interface AppSettings {
   darkMode: boolean;
 }
 
-const STORAGE_KEY = "easyrag.settings";
+const STORAGE_KEY = "contextinject.settings";
+const LEGACY_STORAGE_KEY = "easyrag.settings";
 
 const DEFAULTS: AppSettings = {
   provider: "openrouter",
@@ -52,12 +53,13 @@ export class SettingsService {
     const next = { ...this.state(), ...patch };
     this.state.set(next);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
     this.applyTheme(next.darkMode);
   }
 
   private read(): AppSettings {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
       const stored = raw ? (JSON.parse(raw) as Partial<AppSettings> & { apiKey?: string; userId?: string }) : {};
       // Keys used to live in localStorage; they are server-side now.
       const { apiKey: _legacyKey, userId: _legacyUser, ...rest } = stored;
