@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import uuid
 from typing import Any
 
 import boto3
@@ -12,25 +11,17 @@ from chunking import chunk_text
 from db import DatabaseUnavailableError, connect, ensure_schema
 from parse import ParseError, extract_document
 
+GB = 1024**3
+PLAN_LIMITS = {"starter": 1 * GB, "pro": 50 * GB, "business": 200 * GB}
+
 
 def handler(event: dict[str, Any], _context: Any) -> dict[str, Any]:
-    records = event.get("Records") or []
-    if records:
-        results = [_handle_s3_record(record) for record in records]
-        return {"ok": True, "results": results}
-
     body = event.get("body")
     payload = json.loads(body) if isinstance(body, str) else (body or event)
-    s3_key = payload.get("s3_key") or payload.get("key")
-    if not s3_key:
-        return _response(400, {"error": "s3_key is required"})
-    result = _ingest_key(
-        s3_key=s3_key,
-        filename=payload.get("filename"),
-        content_type=payload.get("content_type"),
-        user_id=payload.get("user_id") or "local",
-        document_id=payload.get("document_id"),
-    )
+    document_id = payload.get("document_id")
+    if not document_id:
+        return _response(400, {"error": "document_id is required"})
+    result = _ingest_document(str(document_id))
     return _response(200, result)
 
 
@@ -42,46 +33,74 @@ def _response(status: int, body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _handle_s3_record(record: dict[str, Any]) -> dict[str, Any]:
-    bucket = record["s3"]["bucket"]["name"]
-    key = record["s3"]["object"]["key"].replace("+", " ")
-    os.environ["DOCUMENTS_BUCKET"] = bucket
-    return _ingest_key(s3_key=key, filename=key.split("/")[-1], content_type=None, user_id="local")
-
-
-def _ingest_key(
-    *,
-    s3_key: str,
-    filename: str | None,
-    content_type: str | None,
-    user_id: str,
-    document_id: str | None = None,
-) -> dict[str, Any]:
+def _ingest_document(doc_id: str) -> dict[str, Any]:
     bucket = os.environ["DOCUMENTS_BUCKET"]
     s3 = boto3.client("s3")
-    obj = s3.get_object(Bucket=bucket, Key=s3_key)
-    body = obj["Body"].read()
-    obj["Body"].close()
-    filename = filename or s3_key.split("/")[-1]
-    content_type = content_type or obj.get("ContentType")
 
     conn = connect()
     ensure_schema(conn)
-    doc_id = document_id or str(uuid.uuid4())
     try:
         with conn.cursor() as cur:
             cur.execute(
                 """
-                INSERT INTO documents (id, user_id, filename, content_type, s3_key, status, bytes)
-                VALUES (%s, %s, %s, %s, %s, 'processing', %s)
-                ON CONFLICT (s3_key) DO UPDATE
-                  SET status = 'processing', error = NULL, updated_at = now()
-                RETURNING id
+                SELECT d.id, d.user_id, d.project_id, d.filename, d.content_type, d.s3_key, u.plan
+                FROM documents d
+                JOIN users u ON u.id = d.user_id
+                WHERE d.id = %s
                 """,
-                (doc_id, user_id, filename, content_type, s3_key, len(body)),
+                (doc_id,),
             )
-            row = cur.fetchone()
-            doc_id = str(row["id"])
+            doc = cur.fetchone()
+        if not doc:
+            return {"document_id": doc_id, "status": "missing"}
+
+        user_id = doc["user_id"]
+        project_id = doc["project_id"]
+        filename = doc["filename"]
+        s3_key = doc["s3_key"]
+
+        try:
+            obj = s3.get_object(Bucket=bucket, Key=s3_key)
+        except ClientError as exc:
+            _mark_error(conn, doc_id, f"Uploaded file not found: {exc}")
+            return {"document_id": doc_id, "status": "error"}
+        body = obj["Body"].read()
+        obj["Body"].close()
+        content_type = doc["content_type"] or obj.get("ContentType")
+        size = len(body)
+
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COALESCE(SUM(bytes), 0) AS used FROM documents WHERE user_id = %s AND id <> %s",
+                (user_id, doc_id),
+            )
+            used = int(cur.fetchone()["used"])
+        limit = PLAN_LIMITS.get(doc.get("plan") or "starter", PLAN_LIMITS["starter"])
+        if used + size > limit:
+            s3.delete_object(Bucket=bucket, Key=s3_key)
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE documents
+                    SET status = 'error', bytes = NULL,
+                        error = 'Storage limit reached for your plan. Delete documents or upgrade.',
+                        updated_at = now()
+                    WHERE id = %s
+                    """,
+                    (doc_id,),
+                )
+            conn.commit()
+            return {"document_id": doc_id, "status": "quota_exceeded"}
+
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE documents
+                SET status = 'processing', error = NULL, bytes = %s, content_type = %s, updated_at = now()
+                WHERE id = %s
+                """,
+                (size, content_type, doc_id),
+            )
         conn.commit()
 
         pages = extract_document(filename, body, content_type)
@@ -96,13 +115,14 @@ def _ingest_key(
             for chunk in chunks:
                 cur.execute(
                     """
-                    INSERT INTO chunks (document_id, user_id, chunk_index, content, page, token_count, metadata)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)
-                    RETURNING id
+                    INSERT INTO chunks
+                      (document_id, user_id, project_id, chunk_index, content, page, token_count, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                     """,
                     (
                         doc_id,
                         user_id,
+                        project_id,
                         chunk["chunk_index"],
                         chunk["content"],
                         chunk.get("page"),
@@ -110,7 +130,6 @@ def _ingest_key(
                         json.dumps({"filename": filename, "s3_key": s3_key}),
                     ),
                 )
-                chunk["id"] = str(cur.fetchone()["id"])
         conn.commit()
     except (ParseError, DatabaseUnavailableError) as exc:
         _mark_error(conn, doc_id, str(exc))
@@ -123,12 +142,7 @@ def _ingest_key(
         lambda_client.invoke(
             FunctionName=os.environ["EMBED_FUNCTION_NAME"],
             InvocationType="Event",
-            Payload=json.dumps(
-                {
-                    "document_id": doc_id,
-                    "user_id": user_id,
-                }
-            ).encode("utf-8"),
+            Payload=json.dumps({"document_id": doc_id, "user_id": user_id}).encode("utf-8"),
         )
     except ClientError as exc:
         conn = connect()

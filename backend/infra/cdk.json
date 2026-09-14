@@ -1,5 +1,5 @@
 {
-  "app": "npx tsx bin/easyrag.ts",
+  "app": "npx tsx bin/contextinject.ts",
   "watch": {
     "include": ["**"],
     "exclude": ["README.md", "cdk*.json", "**/*.d.ts", "**/*.js", "tsconfig.json", "node_modules", "dist"]

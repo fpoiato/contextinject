@@ -1,28 +1,52 @@
 import { firstValueFrom } from "rxjs";
-import { HttpClient, HttpHeaders } from "@angular/common/http";
+import { HttpClient } from "@angular/common/http";
 import { Injectable, inject } from "@angular/core";
+import { AuthService } from "./auth.service";
 import { environment } from "./environment";
 import { SettingsService } from "./settings.service";
 
+export interface Project {
+  id: string;
+  name: string;
+  createdAt: string;
+  documentCount: number;
+  bytes: number;
+}
+
+export interface Folder {
+  id: string;
+  parentId: string | null;
+  name: string;
+  createdAt: string;
+}
+
 export interface DocumentItem {
   id: string;
+  folderId: string | null;
   filename: string;
+  contentType: string | null;
   status: string;
   bytes: number | null;
   error: string | null;
-  created_at: string;
-  updated_at: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProjectTree {
+  folders: Folder[];
+  documents: DocumentItem[];
 }
 
 export interface ChatSession {
   id: string;
   title: string | null;
-  created_at: string;
+  createdAt: string;
 }
 
 export interface SourceHit {
   id: string;
   filename: string;
+  documentId?: string;
   page: number | null;
   content: string;
   score: number;
@@ -35,23 +59,68 @@ export interface ChatMessage {
   model?: string;
 }
 
+export interface KeyEntry {
+  provider: string;
+  masked: string;
+}
+
+export interface Me {
+  sub: string;
+  email: string;
+  isAdmin: boolean;
+  plan: { id: string; name: string; priceUsd: number; storageBytes: number; maxUploadBytes: number };
+  usage: { bytes: number; limitBytes: number; documents: number };
+  keys: KeyEntry[];
+  settings: Record<string, unknown>;
+  createdAt?: string;
+}
+
+export interface ApiErrorBody {
+  error?: string;
+  code?: string;
+  stopped?: boolean;
+}
+
+export function describeError(err: unknown, fallback = "Something went wrong"): string {
+  const body = (err as { error?: ApiErrorBody | string })?.error;
+  if (body && typeof body === "object") {
+    if (body.code === "DB_STOPPED") {
+      return "The database is asleep. Wake it from Account → Database and try again in a few minutes.";
+    }
+    if (body.error) {
+      return body.error;
+    }
+  }
+  if (typeof body === "string" && body) {
+    return body;
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return fallback;
+}
+
 @Injectable({ providedIn: "root" })
 export class ApiService {
   private readonly http = inject(HttpClient);
+  private readonly auth = inject(AuthService);
   private readonly settings = inject(SettingsService);
   readonly baseUrl = environment.apiUrl;
 
-  private headers(extra: Record<string, string> = {}): HttpHeaders {
-    const current = this.settings.settings();
-    return new HttpHeaders({
-      "Content-Type": "application/json",
-      "X-User-Id": current.userId,
-      ...extra,
-    });
+  me() {
+    return this.http.get<Me>(`${this.baseUrl}/me`);
   }
 
-  health() {
-    return this.http.get<{ ok: boolean }>(`${this.baseUrl}/health`);
+  updateSettings(settings: Record<string, unknown>) {
+    return this.http.patch<Me>(`${this.baseUrl}/me`, { settings });
+  }
+
+  setKey(provider: string, apiKey: string) {
+    return this.http.put<{ keys: KeyEntry[] }>(`${this.baseUrl}/me/keys/${provider}`, { apiKey });
+  }
+
+  deleteKey(provider: string) {
+    return this.http.delete<{ keys: KeyEntry[] }>(`${this.baseUrl}/me/keys/${provider}`);
   }
 
   dbStatus() {
@@ -59,82 +128,114 @@ export class ApiService {
   }
 
   startDb() {
-    return this.http.post<{ status: string; message: string }>(`${this.baseUrl}/db/start`, {}, { headers: this.headers() });
+    return this.http.post<{ status: string; message: string }>(`${this.baseUrl}/db/start`, {});
   }
 
   stopDb() {
-    return this.http.post<{ status: string; message: string }>(`${this.baseUrl}/db/stop`, {}, { headers: this.headers() });
+    return this.http.post<{ status: string; message: string }>(`${this.baseUrl}/db/stop`, {});
   }
 
-  documents() {
-    return this.http.get<{ documents: DocumentItem[] }>(`${this.baseUrl}/documents`, { headers: this.headers() });
+  projects() {
+    return this.http.get<{ projects: Project[] }>(`${this.baseUrl}/projects`);
   }
 
-  sessions() {
-    return this.http.get<{ sessions: ChatSession[] }>(`${this.baseUrl}/sessions`, { headers: this.headers() });
+  createProject(name: string) {
+    return this.http.post<Project>(`${this.baseUrl}/projects`, { name });
+  }
+
+  renameProject(id: string, name: string) {
+    return this.http.patch<Project>(`${this.baseUrl}/projects/${id}`, { name });
+  }
+
+  deleteProject(id: string) {
+    return this.http.delete<{ ok: boolean }>(`${this.baseUrl}/projects/${id}`);
+  }
+
+  tree(projectId: string) {
+    return this.http.get<ProjectTree>(`${this.baseUrl}/projects/${projectId}/tree`);
+  }
+
+  createFolder(projectId: string, name: string, parentId: string | null) {
+    return this.http.post<Folder>(`${this.baseUrl}/projects/${projectId}/folders`, { name, parentId });
+  }
+
+  updateFolder(id: string, changes: { name?: string; parentId?: string | null }) {
+    return this.http.patch<Folder>(`${this.baseUrl}/folders/${id}`, changes);
+  }
+
+  deleteFolder(id: string) {
+    return this.http.delete<{ ok: boolean }>(`${this.baseUrl}/folders/${id}`);
+  }
+
+  updateDocument(id: string, changes: { filename?: string; folderId?: string | null }) {
+    return this.http.patch<DocumentItem>(`${this.baseUrl}/documents/${id}`, changes);
+  }
+
+  deleteDocument(id: string) {
+    return this.http.delete<{ ok: boolean }>(`${this.baseUrl}/documents/${id}`);
+  }
+
+  sessions(projectId: string) {
+    return this.http.get<{ sessions: ChatSession[] }>(`${this.baseUrl}/projects/${projectId}/sessions`);
   }
 
   sessionMessages(sessionId: string) {
-    return this.http.get<{ messages: ChatMessage[] }>(`${this.baseUrl}/sessions/${sessionId}`, {
-      headers: this.headers(),
-    });
+    return this.http.get<{ messages: ChatMessage[] }>(`${this.baseUrl}/sessions/${sessionId}`);
   }
 
-  presign(file: File) {
-    return this.http.post<{ url: string; key: string; filename: string; contentType: string }>(
-      `${this.baseUrl}/uploads/presign`,
-      { filename: file.name, contentType: file.type || "application/octet-stream" },
-      { headers: this.headers() },
+  deleteSession(sessionId: string) {
+    return this.http.delete<{ ok: boolean }>(`${this.baseUrl}/sessions/${sessionId}`);
+  }
+
+  async uploadFile(projectId: string, folderId: string | null, file: File): Promise<void> {
+    const signed = await firstValueFrom(
+      this.http.post<{ url: string; documentId: string; contentType: string }>(
+        `${this.baseUrl}/projects/${projectId}/uploads/presign`,
+        { filename: file.name, contentType: file.type || "application/octet-stream", size: file.size, folderId },
+      ),
     );
-  }
-
-  completeUpload(key: string, filename: string, contentType: string) {
-    return this.http.post<{ ok: boolean }>(
-      `${this.baseUrl}/uploads/complete`,
-      { key, filename, contentType },
-      { headers: this.headers() },
-    );
-  }
-
-  async uploadFile(file: File): Promise<void> {
-    const signed = await firstValueFrom(this.presign(file));
     const put = await fetch(signed.url, {
       method: "PUT",
       headers: { "Content-Type": signed.contentType },
       body: file,
     });
     if (!put.ok) {
-      throw new Error(`S3 upload failed (${put.status})`);
+      await firstValueFrom(this.deleteDocument(signed.documentId)).catch(() => undefined);
+      throw new Error(`Upload to storage failed (${put.status})`);
     }
-    await firstValueFrom(this.completeUpload(signed.key, signed.filename, signed.contentType));
+    await firstValueFrom(this.http.post<{ ok: boolean }>(`${this.baseUrl}/uploads/complete`, { documentId: signed.documentId }));
   }
 
   async streamChat(
-    message: string,
-    sessionId: string | null,
+    input: { projectId: string; folderId: string | null; message: string; sessionId: string | null },
     onEvent: (event: Record<string, unknown>) => void,
   ): Promise<void> {
     const current = this.settings.settings();
+    const token = await this.auth.idToken();
     const response = await fetch(`${this.baseUrl}/chat`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-User-Id": current.userId,
-        "X-Api-Key": current.apiKey,
-        "X-Model": current.model,
-        "X-Provider": current.provider,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({
-        message,
-        sessionId,
+        message: input.message,
+        sessionId: input.sessionId,
+        projectId: input.projectId,
+        folderId: input.folderId,
         model: current.model,
         provider: current.provider,
-        apiKey: current.apiKey,
       }),
     });
     if (!response.ok || !response.body) {
       const detail = await response.text();
-      throw new Error(detail || `Chat failed (${response.status})`);
+      let parsed: ApiErrorBody = {};
+      try {
+        parsed = JSON.parse(detail) as ApiErrorBody;
+      } catch {
+        parsed = { error: detail };
+      }
+      throw Object.assign(new Error(parsed.error || `Chat failed (${response.status})`), { error: parsed, status: response.status });
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder();

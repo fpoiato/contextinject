@@ -10,6 +10,7 @@ import {
   aws_certificatemanager as acm,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
+  aws_cognito as cognito,
   aws_ec2 as ec2,
   aws_iam as iam,
   aws_lambda as lambda,
@@ -20,18 +21,32 @@ import {
   aws_route53_targets as targets,
   aws_s3 as s3,
   aws_s3_deployment as s3deploy,
-  aws_s3_notifications as s3n,
   aws_scheduler as scheduler,
   aws_scheduler_targets as schedulerTargets,
 } from "aws-cdk-lib";
+import * as apigwv2 from "aws-cdk-lib/aws-apigatewayv2";
+import { HttpLambdaIntegration } from "aws-cdk-lib/aws-apigatewayv2-integrations";
+import { AwsCustomResource, AwsCustomResourcePolicy, PhysicalResourceId } from "aws-cdk-lib/custom-resources";
 import { Construct } from "constructs";
 
-const APP_DOMAIN = "easyrag.fpoiato.com";
-const API_DOMAIN = "api.easyrag.fpoiato.com";
+const APP_DOMAIN = "contextinject.fpoiato.com";
+const API_DOMAIN = "api.contextinject.fpoiato.com";
+const LEGACY_APP_DOMAIN = "easyrag.fpoiato.com";
+const LEGACY_API_DOMAIN = "api.easyrag.fpoiato.com";
 const ZONE_NAME = "fpoiato.com";
 const ZONE_ID = "Z094351536ZBINA5SU45F";
+const LOCAL_ORIGIN = "http://localhost:4200";
+const APP_ORIGINS = [`https://${APP_DOMAIN}`, `https://${LEGACY_APP_DOMAIN}`, LOCAL_ORIGIN];
+// Hidden Cognito hosted-domain prefix. Changing it replaces the domain and fails
+// while the old prefix still exists; custom login never shows this hostname.
+const COGNITO_DOMAIN_PREFIX = "easyrag-fpoiato";
+// Physical secret/DB names stay put so existing keys and the Postgres database keep working.
+const USER_SECRET_PREFIX = "easyrag/users";
+const SES_FROM_EMAIL = "noreply@fpoiato.com";
+const SES_FROM_NAME = "contextinject";
+const SES_MAIL_FROM = `mail.${ZONE_NAME}`;
 
-export class EasyRagStack extends Stack {
+export class ContextInjectStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
     super(scope, id, props);
 
@@ -40,9 +55,25 @@ export class EasyRagStack extends Stack {
       zoneName: ZONE_NAME,
     });
 
+    // DKIM CNAMEs and MAIL FROM MX/TXT for fpoiato.com already exist in Route53
+    // (SES identity predates this stack). Do not recreate them here.
+    new AwsCustomResource(this, "SesMailFrom", {
+      onUpdate: {
+        service: "SESv2",
+        action: "putEmailIdentityMailFromAttributes",
+        parameters: {
+          EmailIdentity: ZONE_NAME,
+          MailFromDomain: SES_MAIL_FROM,
+          BehaviorOnMxFailure: "USE_DEFAULT_VALUE",
+        },
+        physicalResourceId: PhysicalResourceId.of(`${ZONE_NAME}-mail-from`),
+      },
+      policy: AwsCustomResourcePolicy.fromSdkCalls({ resources: AwsCustomResourcePolicy.ANY_RESOURCE }),
+    });
+
     const certificate = new acm.Certificate(this, "Cert", {
       domainName: APP_DOMAIN,
-      subjectAlternativeNames: [API_DOMAIN],
+      subjectAlternativeNames: [API_DOMAIN, LEGACY_APP_DOMAIN, LEGACY_API_DOMAIN],
       validation: acm.CertificateValidation.fromDns(zone),
     });
 
@@ -61,7 +92,7 @@ export class EasyRagStack extends Stack {
 
     const dbSg = new ec2.SecurityGroup(this, "DbSg", {
       vpc,
-      description: "easyRAG PostgreSQL",
+      description: "contextinject PostgreSQL",
       allowAllOutbound: true,
     });
     dbSg.addIngressRule(
@@ -123,7 +154,7 @@ export class EasyRagStack extends Stack {
       cors: [
         {
           allowedMethods: [s3.HttpMethods.PUT, s3.HttpMethods.GET, s3.HttpMethods.HEAD],
-          allowedOrigins: [`https://${APP_DOMAIN}`, "http://localhost:4200"],
+          allowedOrigins: APP_ORIGINS,
           allowedHeaders: ["*"],
           exposedHeaders: ["ETag", "x-amz-request-id"],
           maxAge: 3600,
@@ -137,6 +168,76 @@ export class EasyRagStack extends Stack {
       enforceSSL: true,
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
+    });
+
+    const userPool = new cognito.UserPool(this, "Users", {
+      userPoolName: "contextinject-users",
+      selfSignUpEnabled: true,
+      signInAliases: { email: true },
+      signInCaseSensitive: false,
+      autoVerify: { email: true },
+      standardAttributes: { email: { required: true, mutable: true } },
+      passwordPolicy: {
+        minLength: 10,
+        requireLowercase: true,
+        requireUppercase: true,
+        requireDigits: true,
+        requireSymbols: false,
+      },
+      accountRecovery: cognito.AccountRecovery.EMAIL_ONLY,
+      email: cognito.UserPoolEmail.withSES({
+        fromEmail: SES_FROM_EMAIL,
+        fromName: SES_FROM_NAME,
+        sesRegion: this.region,
+        sesVerifiedDomain: ZONE_NAME,
+      }),
+      userVerification: {
+        emailSubject: "Your contextinject verification code",
+        emailBody: `Your contextinject verification code is {####}. Enter it at https://${APP_DOMAIN}/verify`,
+        emailStyle: cognito.VerificationEmailStyle.CODE,
+      },
+      featurePlan: cognito.FeaturePlan.ESSENTIALS,
+      deletionProtection: true,
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
+    const userPoolClient = userPool.addClient("Web", {
+      userPoolClientName: "contextinject-web",
+      generateSecret: false,
+      preventUserExistenceErrors: true,
+      // adminUserPassword needs IAM credentials; it exists for operator smoke tests only.
+      authFlows: { userSrp: true, adminUserPassword: true },
+      oAuth: {
+        flows: { authorizationCodeGrant: true },
+        scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],
+        callbackUrls: [
+          `https://${APP_DOMAIN}/auth/callback`,
+          `https://${LEGACY_APP_DOMAIN}/auth/callback`,
+          `${LOCAL_ORIGIN}/auth/callback`,
+        ],
+        logoutUrls: [`https://${APP_DOMAIN}/`, `https://${LEGACY_APP_DOMAIN}/`, `${LOCAL_ORIGIN}/`],
+      },
+      idTokenValidity: Duration.hours(1),
+      accessTokenValidity: Duration.hours(1),
+      refreshTokenValidity: Duration.days(30),
+    });
+
+    const userPoolDomain = userPool.addDomain("Domain", {
+      cognitoDomain: { domainPrefix: COGNITO_DOMAIN_PREFIX },
+      managedLoginVersion: cognito.ManagedLoginVersion.NEWER_MANAGED_LOGIN,
+    });
+
+    new cognito.CfnManagedLoginBranding(this, "Branding", {
+      userPoolId: userPool.userPoolId,
+      clientId: userPoolClient.userPoolClientId,
+      useCognitoProvidedValues: true,
+      returnMergedResources: false,
+    });
+
+    new cognito.CfnUserPoolGroup(this, "AdminGroup", {
+      userPoolId: userPool.userPoolId,
+      groupName: "admin",
+      description: "contextinject operators: can stop the database and manage plans",
     });
 
     const commonLogRetention = logs.RetentionDays.ONE_WEEK;
@@ -197,6 +298,7 @@ export class EasyRagStack extends Stack {
         target: "node22",
         format: lambdaNodejs.OutputFormat.CJS,
         externalModules: [],
+        loader: { ".sql": "text" },
       },
       environment: {
         DB_SECRET_ARN: database.secret!.secretArn,
@@ -207,9 +309,25 @@ export class EasyRagStack extends Stack {
         INGEST_FUNCTION_NAME: ingestFn.functionName,
         DB_INSTANCE_ID: database.instanceIdentifier,
         ALLOWED_ORIGIN: `https://${APP_DOMAIN}`,
-        OPENROUTER_API_KEY: process.env.openrouter || process.env.OPENROUTER || "",
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+        COGNITO_DOMAIN: userPoolDomain.baseUrl(),
+        USER_SECRET_PREFIX,
       },
     });
+
+    apiFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "secretsmanager:CreateSecret",
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:PutSecretValue",
+          "secretsmanager:DeleteSecret",
+          "secretsmanager:TagResource",
+        ],
+        resources: [`arn:aws:secretsmanager:${this.region}:${this.account}:secret:${USER_SECRET_PREFIX}/*`],
+      }),
+    );
 
     const stopFn = new lambda.Function(this, "StopRdsFn", {
       runtime: lambda.Runtime.PYTHON_3_12,
@@ -240,14 +358,78 @@ export class EasyRagStack extends Stack {
     apiFn.addToRolePolicy(rdsControlPolicy);
     stopFn.addToRolePolicy(rdsControlPolicy);
 
-    documentsBucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new s3n.LambdaDestination(ingestFn),
-      { prefix: "uploads/" },
+    const authFn = new lambdaNodejs.NodejsFunction(this, "AuthFn", {
+      entry: path.join(__dirname, "../../lambdas/auth/src/index.ts"),
+      projectRoot: path.join(__dirname, "../../lambdas/auth"),
+      depsLockFilePath: path.join(__dirname, "../../lambdas/auth/package-lock.json"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      timeout: Duration.seconds(15),
+      memorySize: 256,
+      logRetention: commonLogRetention,
+      bundling: {
+        minify: true,
+        sourceMap: false,
+        target: "node22",
+        format: lambdaNodejs.OutputFormat.CJS,
+        externalModules: [],
+      },
+      environment: {
+        ALLOWED_ORIGIN: `https://${APP_DOMAIN}`,
+        COGNITO_USER_POOL_ID: userPool.userPoolId,
+        COGNITO_CLIENT_ID: userPoolClient.userPoolClientId,
+      },
+    });
+    authFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "cognito-idp:AdminInitiateAuth",
+          "cognito-idp:AdminRespondToAuthChallenge",
+          "cognito-idp:AdminUserGlobalSignOut",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:SignUp",
+          "cognito-idp:ConfirmSignUp",
+          "cognito-idp:ResendConfirmationCode",
+          "cognito-idp:ForgotPassword",
+          "cognito-idp:ConfirmForgotPassword",
+          "cognito-idp:RevokeToken",
+        ],
+        resources: [userPool.userPoolArn, `${userPool.userPoolArn}/*`],
+      }),
+    );
+    authFn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: [
+          "cognito-idp:SignUp",
+          "cognito-idp:ConfirmSignUp",
+          "cognito-idp:ResendConfirmationCode",
+          "cognito-idp:ForgotPassword",
+          "cognito-idp:ConfirmForgotPassword",
+          "cognito-idp:RevokeToken",
+        ],
+        resources: ["*"],
+      }),
     );
 
+    const authApi = new apigwv2.HttpApi(this, "AuthHttpApi", {
+      apiName: "contextinject-auth",
+      corsPreflight: {
+        allowHeaders: ["content-type", "authorization"],
+        allowMethods: [apigwv2.CorsHttpMethod.POST, apigwv2.CorsHttpMethod.OPTIONS],
+        allowOrigins: APP_ORIGINS,
+        maxAge: Duration.hours(24),
+      },
+    });
+    const authIntegration = new HttpLambdaIntegration("AuthIntegration", authFn);
+    authApi.addRoutes({
+      path: "/auth/{proxy+}",
+      methods: [apigwv2.HttpMethod.POST],
+      integration: authIntegration,
+    });
+
     new scheduler.Schedule(this, "StopRdsNightly", {
-      description: "Stop easyRAG RDS every night; start it manually when needed",
+      description: "Stop contextinject RDS every night; start it manually when needed",
       schedule: scheduler.ScheduleExpression.cron({
         minute: "0",
         hour: "2",
@@ -262,17 +444,40 @@ export class EasyRagStack extends Stack {
       authType: lambda.FunctionUrlAuthType.NONE,
       invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
       cors: {
-        allowedOrigins: [`https://${APP_DOMAIN}`, "http://localhost:4200"],
+        allowedOrigins: APP_ORIGINS,
         allowedMethods: [lambda.HttpMethod.ALL],
         allowedHeaders: ["*"],
         maxAge: Duration.hours(24),
       },
     });
 
+    const redirectLegacyHost = new cloudfront.Function(this, "RedirectLegacyHost", {
+      comment: "Send easyrag.fpoiato.com to contextinject.fpoiato.com",
+      code: cloudfront.FunctionCode.fromInline(`
+function handler(event) {
+  var request = event.request;
+  var host = request.headers.host.value;
+  if (host === '${LEGACY_APP_DOMAIN}') {
+    var location = 'https://${APP_DOMAIN}' + request.uri;
+    var qs = request.querystring;
+    if (typeof qs === 'string' && qs.length > 0) {
+      location += '?' + qs;
+    }
+    return {
+      statusCode: 301,
+      statusDescription: 'Moved Permanently',
+      headers: { location: { value: location } }
+    };
+  }
+  return request;
+}
+`),
+    });
+
     const spaOrigin = origins.S3BucketOrigin.withOriginAccessControl(frontendBucket);
     const frontendDistribution = new cloudfront.Distribution(this, "FrontendCdn", {
-      comment: "easyRAG SPA",
-      domainNames: [APP_DOMAIN],
+      comment: "contextinject SPA",
+      domainNames: [APP_DOMAIN, LEGACY_APP_DOMAIN],
       certificate,
       defaultRootObject: "index.html",
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
@@ -282,6 +487,12 @@ export class EasyRagStack extends Stack {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
         compress: true,
+        functionAssociations: [
+          {
+            function: redirectLegacyHost,
+            eventType: cloudfront.FunctionEventType.VIEWER_REQUEST,
+          },
+        ],
       },
       errorResponses: [
         { httpStatus: 403, responseHttpStatus: 200, responsePagePath: "/index.html", ttl: Duration.minutes(1) },
@@ -292,16 +503,9 @@ export class EasyRagStack extends Stack {
     const apiCorsPolicy = new cloudfront.ResponseHeadersPolicy(this, "ApiCors", {
       corsBehavior: {
         accessControlAllowCredentials: false,
-        accessControlAllowHeaders: [
-          "Content-Type",
-          "Authorization",
-          "X-Api-Key",
-          "X-User-Id",
-          "X-Model",
-          "X-Provider",
-        ],
-        accessControlAllowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        accessControlAllowOrigins: [`https://${APP_DOMAIN}`, "http://localhost:4200"],
+        accessControlAllowHeaders: ["Content-Type", "Authorization"],
+        accessControlAllowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        accessControlAllowOrigins: APP_ORIGINS,
         accessControlMaxAge: Duration.hours(24),
         originOverride: true,
       },
@@ -322,11 +526,23 @@ export class EasyRagStack extends Stack {
     });
 
     const apiDistribution = new cloudfront.Distribution(this, "ApiCdn", {
-      comment: "easyRAG API",
-      domainNames: [API_DOMAIN],
+      comment: "contextinject API",
+      domainNames: [API_DOMAIN, LEGACY_API_DOMAIN],
       certificate,
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
+      additionalBehaviors: {
+        "/auth*": {
+          origin: new origins.HttpOrigin(`${authApi.apiId}.execute-api.${this.region}.amazonaws.com`, {
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          responseHeadersPolicy: apiCorsPolicy,
+        },
+      },
       defaultBehavior: {
         origin: new origins.FunctionUrlOrigin(apiUrl),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
@@ -342,9 +558,19 @@ export class EasyRagStack extends Stack {
       recordName: "easyrag",
       target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(frontendDistribution)),
     });
+    new route53.ARecord(this, "AppAliasCurrent", {
+      zone,
+      recordName: "contextinject",
+      target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(frontendDistribution)),
+    });
     new route53.ARecord(this, "ApiAlias", {
       zone,
       recordName: "api.easyrag",
+      target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(apiDistribution)),
+    });
+    new route53.ARecord(this, "ApiAliasCurrent", {
+      zone,
+      recordName: "api.contextinject",
       target: route53.RecordTarget.fromAlias(new targets.CloudFrontTarget(apiDistribution)),
     });
 
@@ -361,5 +587,9 @@ export class EasyRagStack extends Stack {
     new CfnOutput(this, "ApiUrl", { value: `https://${API_DOMAIN}` });
     new CfnOutput(this, "DbInstance", { value: database.instanceIdentifier });
     new CfnOutput(this, "DocumentsBucketName", { value: documentsBucket.bucketName });
+    new CfnOutput(this, "UserPoolId", { value: userPool.userPoolId });
+    new CfnOutput(this, "UserPoolClientId", { value: userPoolClient.userPoolClientId });
+    new CfnOutput(this, "CognitoDomain", { value: userPoolDomain.baseUrl() });
+    new CfnOutput(this, "AuthApiUrl", { value: `${authApi.apiEndpoint}/auth` });
   }
 }

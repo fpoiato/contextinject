@@ -1,76 +1,135 @@
-<div class="flex h-full min-h-0 flex-col">
-  <div class="mb-3 flex items-center justify-between">
-    <h2 class="text-sm font-semibold uppercase tracking-wide text-slate-400">Chat</h2>
-    <button class="text-xs text-cyan-300 hover:text-cyan-200" type="button" (click)="newChat()">New conversation</button>
-  </div>
+<div class="flex min-h-0 flex-1 flex-col">
+  <!-- Toolbar -->
+  <div class="flex flex-wrap items-center gap-2 border-b border-slate-800/70 px-4 py-2 text-xs md:px-6">
+    <select
+      class="appearance-auto rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5"
+      (change)="setProvider($event)"
+      title="Provider"
+    >
+      @for (provider of providers; track provider.id) {
+        <option [value]="provider.id" [selected]="provider.id === settings.settings().provider">{{ provider.label }}</option>
+      }
+    </select>
+    <select
+      class="max-w-[14rem] appearance-auto rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5"
+      (change)="setModel($event)"
+      title="Model"
+    >
+      @for (item of models(); track item.id) {
+        <option [value]="item.id" [selected]="item.id === settings.settings().model">{{ item.label }}</option>
+      }
+    </select>
 
-  <div class="mb-3 flex gap-2 overflow-x-auto pb-1">
-    @for (session of sessions(); track session.id) {
-      <button
-        class="whitespace-nowrap rounded-full border px-3 py-1 text-xs"
-        [class.border-cyan-400]="session.id === sessionId()"
-        [class.text-cyan-200]="session.id === sessionId()"
-        [class.border-slate-800]="session.id !== sessionId()"
-        type="button"
-        (click)="openSession(session.id)"
-      >
-        {{ session.title || "Untitled" }}
+    <span class="flex-1"></span>
+
+    <select
+      class="max-w-[14rem] appearance-auto rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5"
+      (change)="openSession($event)"
+      title="Conversation history"
+      [disabled]="!store.currentProjectId()"
+    >
+      <option value="" [selected]="!sessionId()">New conversation</option>
+      @for (session of sessions(); track session.id) {
+        <option [value]="session.id" [selected]="session.id === sessionId()">{{ session.title || "Untitled" }}</option>
+      }
+    </select>
+    @if (sessionId()) {
+      <button type="button" class="rounded-lg border border-slate-800 px-2 py-1.5 text-slate-400 hover:text-rose-300" title="Delete conversation" (click)="deleteCurrentSession()">
+        ✕
       </button>
     }
+    <button type="button" class="rounded-lg bg-slate-800 px-3 py-1.5 font-medium hover:bg-slate-700" (click)="newChat()">New</button>
   </div>
 
-  <div class="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
-    @for (message of messages(); track $index) {
-      <article
-        class="max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6"
-        [class.ml-auto]="message.role === 'user'"
-        [class.bg-cyan-500/15]="message.role === 'user'"
-        [class.bg-slate-900]="message.role === 'assistant'"
-        [class.border]="message.role === 'assistant'"
-        [class.border-slate-800]="message.role === 'assistant'"
-      >
-        <p class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{{ message.role }}</p>
-        <div class="whitespace-pre-wrap">{{ message.content }}</div>
-      </article>
-    } @empty {
-      <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 text-sm text-slate-400">
-        Ask a question about your documents. easyRAG retrieves pgvector chunks and cites the sources used.
-      </div>
-    }
+  <!-- Messages: the only scrolling region of the main panel -->
+  <div #scroller class="min-h-0 flex-1 overflow-y-auto px-4 py-4 md:px-6">
+    <div class="mx-auto max-w-3xl space-y-3">
+      @for (message of messages(); track $index) {
+        <article
+          class="rounded-2xl px-4 py-3 text-sm leading-6"
+          [class.ml-auto]="message.role === 'user'"
+          [class.max-w-[85%]]="message.role === 'user'"
+          [class.bg-cyan-500/15]="message.role === 'user'"
+          [class.bg-slate-900]="message.role === 'assistant'"
+          [class.border]="message.role === 'assistant'"
+          [class.border-slate-800]="message.role === 'assistant'"
+        >
+          <p class="mb-1 text-[11px] uppercase tracking-wide text-slate-500">{{ message.role === "user" ? "You" : "contextinject" }}</p>
+          @if (message.content) {
+            <div class="whitespace-pre-wrap break-words">{{ message.content }}</div>
+          } @else if (streaming()) {
+            <div class="flex gap-1 py-1">
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500"></span>
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:120ms]"></span>
+              <span class="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500 [animation-delay:240ms]"></span>
+            </div>
+          }
+        </article>
+      } @empty {
+        <div class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 text-sm text-slate-400">
+          @if (store.currentProject(); as project) {
+            Ask anything about <strong class="text-slate-200">{{ project.name }}</strong>
+            @if (store.currentFolder(); as folder) {
+              / <strong class="text-slate-200">{{ folder.name }}</strong>
+            }.
+            Retrieved passages are cited as [#n] and listed under the answer.
+          } @else {
+            Create a project and upload documents to start chatting.
+          }
+        </div>
+      }
+
+      @if (sources().length) {
+        <details class="rounded-2xl border border-slate-800 bg-slate-950/80 p-3">
+          <summary class="cursor-pointer text-sm font-medium text-slate-300">Retrieved sources ({{ sources().length }})</summary>
+          <div class="mt-3 space-y-2">
+            @for (source of sources(); track source.id; let i = $index) {
+              <article class="rounded-xl bg-slate-900 p-3 text-xs text-slate-300">
+                <p class="mb-1 font-medium text-slate-200">
+                  [#{{ i + 1 }}] {{ source.filename }}
+                  @if (source.page) {
+                    · p.{{ source.page }}
+                  }
+                  <span class="text-slate-500"> · {{ (source.score * 100).toFixed(0) }}%</span>
+                </p>
+                <p class="line-clamp-5 whitespace-pre-wrap">{{ source.content }}</p>
+              </article>
+            }
+          </div>
+        </details>
+      }
+    </div>
   </div>
 
-  @if (error()) {
-    <p class="mt-3 text-sm text-rose-400">{{ error() }}</p>
-  }
-
-  @if (sources().length) {
-    <details class="mt-3 rounded-2xl border border-slate-800 bg-slate-950/80 p-3">
-      <summary class="cursor-pointer text-sm font-medium text-slate-300">Retrieved sources ({{ sources().length }})</summary>
-      <div class="mt-3 space-y-2">
-        @for (source of sources(); track source.id; let i = $index) {
-          <article class="rounded-xl bg-slate-900 p-3 text-xs text-slate-300">
-            <p class="mb-1 font-medium text-slate-200">[#{{ i + 1 }}] {{ source.filename }} @if (source.page) {· p.{{ source.page }}}</p>
-            <p class="line-clamp-5 whitespace-pre-wrap">{{ source.content }}</p>
-          </article>
-        }
-      </div>
-    </details>
-  }
-
-  <form class="mt-3 flex gap-2" (submit)="$event.preventDefault(); send()">
-    <input
-      class="flex-1 rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm outline-none ring-cyan-500/40 focus:ring"
-      [(ngModel)]="draft"
-      name="draft"
-      [disabled]="streaming()"
-      placeholder="Ask your knowledge base..."
-    />
-    <button
-      class="rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 disabled:opacity-50"
-      type="submit"
-      [disabled]="streaming()"
-    >
-      {{ streaming() ? "..." : "Send" }}
-    </button>
-  </form>
+  <!-- Composer -->
+  <div class="border-t border-slate-800 px-4 py-3 md:px-6">
+    <div class="mx-auto max-w-3xl">
+      @if (error()) {
+        <p class="mb-2 text-sm text-rose-300">
+          {{ error() }}
+          @if (needsKey()) {
+            <span class="text-slate-400"> Open your account (bottom of the sidebar) to add a key.</span>
+          }
+        </p>
+      }
+      <form class="flex items-end gap-2" (submit)="$event.preventDefault(); send()">
+        <textarea
+          class="max-h-40 min-h-[3rem] flex-1 resize-y rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm outline-none ring-cyan-500/40 focus:ring"
+          [(ngModel)]="draft"
+          name="draft"
+          rows="1"
+          [disabled]="streaming() || !store.currentProjectId()"
+          (keydown)="onComposerKeydown($event)"
+          [placeholder]="store.currentProjectId() ? 'Ask your documents… (Enter to send, Shift+Enter for a new line)' : 'Create a project first'"
+        ></textarea>
+        <button
+          class="rounded-2xl bg-cyan-400 px-4 py-3 text-sm font-semibold text-slate-950 disabled:opacity-50"
+          type="submit"
+          [disabled]="streaming() || !store.currentProjectId()"
+        >
+          {{ streaming() ? "…" : "Send" }}
+        </button>
+      </form>
+    </div>
+  </div>
 </div>

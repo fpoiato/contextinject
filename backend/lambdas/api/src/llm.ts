@@ -1,3 +1,5 @@
+import { apiKeyForProvider, resolveModelId } from "./models.js";
+
 export interface ChatRequest {
   apiKey?: string;
   provider?: string;
@@ -12,7 +14,7 @@ export interface ChatChunk {
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
-function providerOf(model: string, explicit?: string): string {
+export function providerOf(model: string, explicit?: string): string {
   if (explicit && explicit !== "auto") {
     return explicit;
   }
@@ -29,8 +31,8 @@ function headersFor(provider: string, apiKey: string): Record<string, string> {
     Authorization: `Bearer ${apiKey}`,
   };
   if (provider === "openrouter") {
-    headers["HTTP-Referer"] = process.env.ALLOWED_ORIGIN || "https://easyrag.fpoiato.com";
-    headers["X-Title"] = "easyRAG";
+    headers["HTTP-Referer"] = process.env.ALLOWED_ORIGIN || "https://contextinject.fpoiato.com";
+    headers["X-Title"] = "contextinject";
   }
   if (provider === "anthropic") {
     headers["x-api-key"] = apiKey;
@@ -64,12 +66,12 @@ function modelName(model: string, provider: string): string {
 }
 
 export async function* streamChat(request: ChatRequest): AsyncGenerator<ChatChunk> {
-  const apiKey = request.apiKey || process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing API key. Add one in Settings.");
-  }
   const provider = providerOf(request.model, request.provider);
-  const model = modelName(request.model, provider);
+  const apiKey = apiKeyForProvider(provider, request.apiKey);
+  if (!apiKey) {
+    throw new Error(`No API key configured for ${provider}. Add one in Account → API keys.`);
+  }
+  const model = resolveModelId(modelName(request.model, provider));
   const url = endpointFor(provider, apiKey);
 
   if (provider === "anthropic") {
@@ -145,7 +147,7 @@ async function* streamAnthropic(
     headers: headersFor("anthropic", apiKey),
     body: JSON.stringify({
       model,
-      max_tokens: 2048,
+      max_tokens: 8192,
       stream: true,
       system,
       messages: rest,

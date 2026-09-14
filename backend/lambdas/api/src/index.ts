@@ -1,15 +1,29 @@
-import { randomUUID } from "node:crypto";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { LambdaClient, InvokeCommand } from "@aws-sdk/client-lambda";
 import type { APIGatewayProxyEventV2, Context } from "aws-lambda";
+import { authenticate, HttpError, requireAdmin, type AuthContext } from "./auth.js";
 import { DatabaseUnavailableError, query } from "./db.js";
-import { buildRagMessages, searchChunks } from "./rag.js";
-import { streamChat } from "./llm.js";
+import { deleteKey, listKeys, readKeys, setKey } from "./keys.js";
+import { providerOf, streamChat } from "./llm.js";
+import { PLANS, planFor } from "./plans.js";
 import { dbStatus, startDb, stopDb } from "./rds-admin.js";
-
-const s3 = new S3Client({});
-const lambda = new LambdaClient({});
+import { buildRagMessages, searchChunks } from "./rag.js";
+import {
+  completeUpload,
+  createFolder,
+  createProject,
+  deleteDocument,
+  deleteFolder,
+  deleteProject,
+  deleteSession,
+  getSession,
+  listProjects,
+  listSessions,
+  presignUpload,
+  projectTree,
+  renameProject,
+  updateDocument,
+  updateFolder,
+  usageFor,
+} from "./workspace.js";
 
 declare const awslambda: {
   streamifyResponse: (
@@ -27,32 +41,21 @@ declare const awslambda: {
   };
 };
 
-const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://easyrag.fpoiato.com";
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || "https://contextinject.fpoiato.com";
 
 function corsHeaders(): Record<string, string> {
   return {
     "access-control-allow-origin": ALLOWED_ORIGIN,
-    "access-control-allow-headers": "content-type,authorization,x-api-key,x-user-id,x-model,x-provider",
-    "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
+    "access-control-allow-headers": "content-type,authorization",
+    "access-control-allow-methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS",
   };
 }
 
-function jsonStream(
-  responseStream: NodeJS.WritableStream,
-  statusCode: number,
-  body: unknown,
-): NodeJS.WritableStream {
-  return awslambda.HttpResponseStream.from(responseStream, {
-    statusCode,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      ...corsHeaders(),
-    },
-  });
-}
-
 function writeJson(stream: NodeJS.WritableStream, statusCode: number, body: unknown): void {
-  const out = jsonStream(stream, statusCode, body);
+  const out = awslambda.HttpResponseStream.from(stream, {
+    statusCode,
+    headers: { "content-type": "application/json; charset=utf-8", ...corsHeaders() },
+  });
   out.write(JSON.stringify(body));
   out.end();
 }
@@ -65,27 +68,88 @@ function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
   try {
     return JSON.parse(raw) as Record<string, unknown>;
   } catch {
-    return {};
+    throw new HttpError(400, "Invalid JSON body");
   }
 }
 
-function userId(event: APIGatewayProxyEventV2): string {
-  return event.headers["x-user-id"] || event.headers["X-User-Id"] || "local";
-}
+type Params = Record<string, string>;
 
-function header(event: APIGatewayProxyEventV2, name: string): string | undefined {
-  const expected = name.toLowerCase();
-  for (const [key, value] of Object.entries(event.headers)) {
-    if (key.toLowerCase() === expected && value) {
-      return value;
+function match(pattern: string, path: string): Params | null {
+  const patternParts = pattern.split("/");
+  const pathParts = path.split("/");
+  if (patternParts.length !== pathParts.length) {
+    return null;
+  }
+  const params: Params = {};
+  for (let i = 0; i < patternParts.length; i += 1) {
+    const expected = patternParts[i];
+    const actual = pathParts[i];
+    if (expected.startsWith(":")) {
+      params[expected.slice(1)] = decodeURIComponent(actual);
+    } else if (expected !== actual) {
+      return null;
     }
   }
-  return undefined;
+  return params;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function uuidParam(value: string | undefined, name: string): string {
+  if (!value || !UUID_RE.test(value)) {
+    throw new HttpError(400, `${name} must be a UUID`);
+  }
+  return value;
+}
+
+function optionalUuid(value: unknown, name: string): string | null {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  return uuidParam(String(value), name);
+}
+
+const seenUsers = new Set<string>();
+
+async function ensureUser(auth: AuthContext): Promise<void> {
+  if (seenUsers.has(auth.sub)) {
+    return;
+  }
+  await query(
+    `
+    INSERT INTO users (id, email) VALUES ($1, $2)
+    ON CONFLICT (id) DO UPDATE SET email = EXCLUDED.email, updated_at = now()
+    `,
+    [auth.sub, auth.email],
+  );
+  seenUsers.add(auth.sub);
+}
+
+async function me(auth: AuthContext) {
+  await ensureUser(auth);
+  const row = await query<{ plan: string; email: string; settings: Record<string, unknown>; created_at: string }>(
+    `SELECT plan, email, settings, created_at FROM users WHERE id = $1`,
+    [auth.sub],
+  );
+  const user = row.rows[0];
+  const plan = planFor(user?.plan);
+  const [usage, keys] = await Promise.all([usageFor(auth.sub), listKeys(auth.sub)]);
+  return {
+    sub: auth.sub,
+    email: user?.email ?? auth.email,
+    isAdmin: auth.groups.includes("admin"),
+    plan: { id: plan.id, name: plan.name, priceUsd: plan.priceUsd, storageBytes: plan.storageBytes, maxUploadBytes: plan.maxUploadBytes },
+    usage,
+    keys,
+    settings: user?.settings ?? {},
+    createdAt: user?.created_at,
+  };
 }
 
 export const handler = awslambda.streamifyResponse(async (event, responseStream) => {
   const method = event.requestContext.http.method.toUpperCase();
   const path = (event.rawPath || "/").replace(/\/+$/, "") || "/";
+  const qs = event.queryStringParameters ?? {};
 
   if (method === "OPTIONS") {
     writeJson(responseStream, 204, {});
@@ -94,9 +158,23 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
 
   try {
     if (method === "GET" && path === "/health") {
-      writeJson(responseStream, 200, { ok: true, service: "easyrag" });
+      writeJson(responseStream, 200, { ok: true, service: "contextinject" });
       return;
     }
+    if (method === "GET" && path === "/config") {
+      writeJson(responseStream, 200, {
+        region: process.env.AWS_REGION,
+        userPoolId: process.env.COGNITO_USER_POOL_ID,
+        clientId: process.env.COGNITO_CLIENT_ID,
+        domain: process.env.COGNITO_DOMAIN,
+        plans: Object.values(PLANS),
+      });
+      return;
+    }
+
+    const auth = await authenticate(event);
+    let params: Params | null;
+
     if (method === "GET" && path === "/db") {
       writeJson(responseStream, 200, await dbStatus());
       return;
@@ -106,141 +184,202 @@ export const handler = awslambda.streamifyResponse(async (event, responseStream)
       return;
     }
     if (method === "POST" && path === "/db/stop") {
+      requireAdmin(auth);
       writeJson(responseStream, 200, await stopDb());
       return;
     }
-    if (method === "POST" && path === "/uploads/presign") {
-      writeJson(responseStream, 200, await presign(event));
+
+    if (method === "GET" && path === "/me") {
+      writeJson(responseStream, 200, await me(auth));
+      return;
+    }
+    if (method === "PATCH" && path === "/me") {
+      await ensureUser(auth);
+      const body = parseBody(event);
+      const settings = typeof body.settings === "object" && body.settings ? body.settings : {};
+      await query(`UPDATE users SET settings = settings || $2::jsonb, updated_at = now() WHERE id = $1`, [
+        auth.sub,
+        JSON.stringify(settings),
+      ]);
+      writeJson(responseStream, 200, await me(auth));
+      return;
+    }
+    if (method === "GET" && path === "/me/keys") {
+      writeJson(responseStream, 200, { keys: await listKeys(auth.sub) });
+      return;
+    }
+    if ((params = match("/me/keys/:provider", path)) && method === "PUT") {
+      const body = parseBody(event);
+      await setKey(auth.sub, params.provider, String(body.apiKey ?? ""));
+      writeJson(responseStream, 200, { keys: await listKeys(auth.sub) });
+      return;
+    }
+    if ((params = match("/me/keys/:provider", path)) && method === "DELETE") {
+      await deleteKey(auth.sub, params.provider);
+      writeJson(responseStream, 200, { keys: await listKeys(auth.sub) });
+      return;
+    }
+
+    await ensureUser(auth);
+
+    if (method === "GET" && path === "/projects") {
+      writeJson(responseStream, 200, { projects: await listProjects(auth.sub) });
+      return;
+    }
+    if (method === "POST" && path === "/projects") {
+      const body = parseBody(event);
+      writeJson(responseStream, 201, await createProject(auth.sub, String(body.name ?? "")));
+      return;
+    }
+    if ((params = match("/projects/:id", path)) && method === "PATCH") {
+      const body = parseBody(event);
+      writeJson(responseStream, 200, await renameProject(auth.sub, uuidParam(params.id, "project id"), String(body.name ?? "")));
+      return;
+    }
+    if ((params = match("/projects/:id", path)) && method === "DELETE") {
+      await deleteProject(auth.sub, uuidParam(params.id, "project id"));
+      writeJson(responseStream, 200, { ok: true });
+      return;
+    }
+    if ((params = match("/projects/:id/tree", path)) && method === "GET") {
+      writeJson(responseStream, 200, await projectTree(auth.sub, uuidParam(params.id, "project id")));
+      return;
+    }
+    if ((params = match("/projects/:id/folders", path)) && method === "POST") {
+      const body = parseBody(event);
+      writeJson(
+        responseStream,
+        201,
+        await createFolder(auth.sub, uuidParam(params.id, "project id"), String(body.name ?? ""), optionalUuid(body.parentId, "parentId")),
+      );
+      return;
+    }
+    if ((params = match("/folders/:id", path)) && method === "PATCH") {
+      const body = parseBody(event);
+      writeJson(
+        responseStream,
+        200,
+        await updateFolder(auth.sub, uuidParam(params.id, "folder id"), {
+          name: body.name === undefined ? undefined : String(body.name),
+          parentId: body.parentId === undefined ? undefined : optionalUuid(body.parentId, "parentId"),
+        }),
+      );
+      return;
+    }
+    if ((params = match("/folders/:id", path)) && method === "DELETE") {
+      await deleteFolder(auth.sub, uuidParam(params.id, "folder id"));
+      writeJson(responseStream, 200, { ok: true });
+      return;
+    }
+    if ((params = match("/projects/:id/uploads/presign", path)) && method === "POST") {
+      const body = parseBody(event);
+      writeJson(
+        responseStream,
+        200,
+        await presignUpload(auth.sub, uuidParam(params.id, "project id"), {
+          filename: String(body.filename ?? ""),
+          contentType: String(body.contentType ?? "application/octet-stream"),
+          size: Number(body.size ?? 0),
+          folderId: optionalUuid(body.folderId, "folderId"),
+        }),
+      );
       return;
     }
     if (method === "POST" && path === "/uploads/complete") {
-      writeJson(responseStream, 202, await completeUpload(event));
+      const body = parseBody(event);
+      writeJson(responseStream, 202, await completeUpload(auth.sub, uuidParam(String(body.documentId ?? ""), "documentId")));
       return;
     }
-    if (method === "GET" && path === "/documents") {
-      writeJson(responseStream, 200, await listDocuments(event));
+    if ((params = match("/documents/:id", path)) && method === "PATCH") {
+      const body = parseBody(event);
+      writeJson(
+        responseStream,
+        200,
+        await updateDocument(auth.sub, uuidParam(params.id, "document id"), {
+          filename: body.filename === undefined ? undefined : String(body.filename),
+          folderId: body.folderId === undefined ? undefined : optionalUuid(body.folderId, "folderId"),
+        }),
+      );
       return;
     }
-    if (method === "GET" && path === "/sessions") {
-      writeJson(responseStream, 200, await listSessions(event));
+    if ((params = match("/documents/:id", path)) && method === "DELETE") {
+      await deleteDocument(auth.sub, uuidParam(params.id, "document id"));
+      writeJson(responseStream, 200, { ok: true });
       return;
     }
-    if (method === "GET" && path.startsWith("/sessions/")) {
-      writeJson(responseStream, 200, await getSession(event, path.split("/")[2] ?? ""));
+    if ((params = match("/projects/:id/sessions", path)) && method === "GET") {
+      writeJson(responseStream, 200, { sessions: await listSessions(auth.sub, uuidParam(params.id, "project id")) });
+      return;
+    }
+    if ((params = match("/sessions/:id", path)) && method === "GET") {
+      writeJson(responseStream, 200, await getSession(auth.sub, uuidParam(params.id, "session id")));
+      return;
+    }
+    if ((params = match("/sessions/:id", path)) && method === "DELETE") {
+      await deleteSession(auth.sub, uuidParam(params.id, "session id"));
+      writeJson(responseStream, 200, { ok: true });
       return;
     }
     if (method === "POST" && path === "/chat") {
-      await handleChat(event, responseStream);
+      await handleChat(auth, event, responseStream);
       return;
     }
+    void qs;
     writeJson(responseStream, 404, { error: "Not found" });
   } catch (error) {
+    if (error instanceof HttpError) {
+      writeJson(responseStream, error.status, { error: error.message, code: error.code });
+      return;
+    }
     if (error instanceof DatabaseUnavailableError) {
       writeJson(responseStream, 503, { error: error.message, code: "DB_STOPPED", stopped: error.stopped });
       return;
     }
+    console.error(error);
     const message = error instanceof Error ? error.message : "Internal error";
     writeJson(responseStream, 500, { error: message });
   }
 });
 
-async function presign(event: APIGatewayProxyEventV2) {
-  const body = parseBody(event);
-  const filename = String(body.filename || "document.bin").replace(/[^\w.\- ()]/g, "_");
-  const contentType = String(body.contentType || "application/octet-stream");
-  const key = `uploads/${userId(event)}/${randomUUID()}/${filename}`;
-  const url = await getSignedUrl(
-    s3,
-    new PutObjectCommand({
-      Bucket: process.env.DOCUMENTS_BUCKET,
-      Key: key,
-      ContentType: contentType,
-    }),
-    { expiresIn: 900 },
-  );
-  return { url, key, filename, contentType };
-}
-
-async function completeUpload(event: APIGatewayProxyEventV2) {
-  const body = parseBody(event);
-  const key = String(body.key || "");
-  if (!key) {
-    throw new Error("key is required");
-  }
-  await lambda.send(
-    new InvokeCommand({
-      FunctionName: process.env.INGEST_FUNCTION_NAME,
-      InvocationType: "Event",
-      Payload: Buffer.from(
-        JSON.stringify({
-          s3_key: key,
-          filename: body.filename,
-          content_type: body.contentType,
-          user_id: userId(event),
-        }),
-      ),
-    }),
-  );
-  return { ok: true, status: "processing" };
-}
-
-async function listDocuments(event: APIGatewayProxyEventV2) {
-  const result = await query(
-    `
-    SELECT id, filename, status, bytes, error, created_at, updated_at
-    FROM documents
-    WHERE $1::text = 'local' OR user_id = $1
-    ORDER BY created_at DESC
-    LIMIT 50
-    `,
-    [userId(event)],
-  );
-  return { documents: result.rows };
-}
-
-async function listSessions(event: APIGatewayProxyEventV2) {
-  const result = await query(
-    `
-    SELECT id, title, created_at
-    FROM chat_sessions
-    WHERE $1::text = 'local' OR user_id = $1
-    ORDER BY created_at DESC
-    LIMIT 40
-    `,
-    [userId(event)],
-  );
-  return { sessions: result.rows };
-}
-
-async function getSession(event: APIGatewayProxyEventV2, sessionId: string) {
-  const result = await query(
-    `
-    SELECT id, role, content, sources, model, prompt_tokens, completion_tokens, created_at
-    FROM chat_history
-    WHERE session_id = $1
-    ORDER BY created_at
-    `,
-    [sessionId],
-  );
-  return { sessionId, messages: result.rows };
-}
-
-async function handleChat(event: APIGatewayProxyEventV2, responseStream: NodeJS.WritableStream) {
+async function handleChat(auth: AuthContext, event: APIGatewayProxyEventV2, responseStream: NodeJS.WritableStream) {
   const body = parseBody(event);
   const question = String(body.message || body.question || "").trim();
   if (!question) {
-    writeJson(responseStream, 400, { error: "message is required" });
-    return;
+    throw new HttpError(400, "message is required");
   }
-  const uid = userId(event);
-  const model = String(body.model || header(event, "x-model") || "openai/gpt-4o-mini");
-  const provider = String(body.provider || header(event, "x-provider") || "openrouter");
-  const apiKey = String(body.apiKey || header(event, "x-api-key") || "");
-  let sessionId = String(body.sessionId || "");
-  if (!sessionId) {
+  const projectId = uuidParam(String(body.projectId ?? ""), "projectId");
+  const folderId = optionalUuid(body.folderId, "folderId");
+  const owned = await query<{ id: string }>(`SELECT id FROM projects WHERE id = $1 AND user_id = $2`, [projectId, auth.sub]);
+  if (owned.rowCount === 0) {
+    throw new HttpError(404, "Project not found");
+  }
+
+  const model = String(body.model || "openai/gpt-5.6-luna");
+  const provider = providerOf(model, body.provider ? String(body.provider) : undefined);
+  const keys = await readKeys(auth.sub);
+  const apiKey = keys[provider] ?? (provider !== "openrouter" ? keys.openrouter : undefined);
+  const effectiveProvider = keys[provider] ? provider : apiKey ? "openrouter" : provider;
+  if (!apiKey) {
+    throw new HttpError(
+      402,
+      `No API key configured for ${provider}. Add your key in Account → API keys.`,
+      "NO_API_KEY",
+    );
+  }
+
+  let sessionId = optionalUuid(body.sessionId, "sessionId");
+  if (sessionId) {
+    const session = await query<{ id: string }>(
+      `SELECT id FROM chat_sessions WHERE id = $1 AND user_id = $2 AND project_id = $3`,
+      [sessionId, auth.sub, projectId],
+    );
+    if (session.rowCount === 0) {
+      throw new HttpError(404, "Session not found");
+    }
+  } else {
     const created = await query<{ id: string }>(
-      `INSERT INTO chat_sessions (user_id, title) VALUES ($1, $2) RETURNING id`,
-      [uid, question.slice(0, 80)],
+      `INSERT INTO chat_sessions (user_id, project_id, title) VALUES ($1, $2, $3) RETURNING id`,
+      [auth.sub, projectId, question.slice(0, 80)],
     );
     sessionId = created.rows[0].id;
   }
@@ -249,12 +388,12 @@ async function handleChat(event: APIGatewayProxyEventV2, responseStream: NodeJS.
     `SELECT role, content FROM chat_history WHERE session_id = $1 ORDER BY created_at`,
     [sessionId],
   );
-  const sources = await searchChunks(uid, question, model);
+  const sources = await searchChunks({ userId: auth.sub, projectId, folderId }, question, model);
   const messages = buildRagMessages(question, sources, historyResult.rows);
 
   await query(
     `INSERT INTO chat_history (session_id, user_id, role, content, model) VALUES ($1, $2, 'user', $3, $4)`,
-    [sessionId, uid, question, model],
+    [sessionId, auth.sub, question, model],
   );
 
   const stream = awslambda.HttpResponseStream.from(responseStream, {
@@ -273,7 +412,7 @@ async function handleChat(event: APIGatewayProxyEventV2, responseStream: NodeJS.
   let answer = "";
   let usage: { prompt_tokens?: number; completion_tokens?: number } = {};
   try {
-    for await (const chunk of streamChat({ apiKey, provider, model, messages, stream: true })) {
+    for await (const chunk of streamChat({ apiKey, provider: effectiveProvider, model, messages, stream: true })) {
       if (chunk.type === "token" && chunk.text) {
         answer += chunk.text;
         send({ type: "token", text: chunk.text });
@@ -295,15 +434,7 @@ async function handleChat(event: APIGatewayProxyEventV2, responseStream: NodeJS.
       (session_id, user_id, role, content, sources, model, prompt_tokens, completion_tokens)
     VALUES ($1, $2, 'assistant', $3, $4::jsonb, $5, $6, $7)
     `,
-    [
-      sessionId,
-      uid,
-      answer,
-      JSON.stringify(sources),
-      model,
-      usage.prompt_tokens ?? null,
-      usage.completion_tokens ?? null,
-    ],
+    [sessionId, auth.sub, answer, JSON.stringify(sources), model, usage.prompt_tokens ?? null, usage.completion_tokens ?? null],
   );
   send({ type: "done", sessionId, usage });
   stream.write("data: [DONE]\n\n");
