@@ -43,8 +43,11 @@ export AWS_DEFAULT_REGION=us-east-1
 
 Variáveis opcionais no ambiente de deploy:
 
-- `openrouter` — fallback de chave se o usuário não preencher Settings
+- `openrouter` / `OPENROUTER_API_KEY` — fallback se o usuário não preencher Settings
+- `anthropic` / `ANTHROPIC_API_KEY` — fallback para o provedor Anthropic
 - `LLAMA_CLOUD_API_KEY` — ativa extração LlamaParse
+
+O dropdown de Settings usa IDs atuais da Anthropic (`claude-sonnet-5`, `claude-opus-5`, `claude-haiku-4-5`). IDs aposentados como `claude-sonnet-4-20250514` são remapeados automaticamente.
 
 ## Endpoints
 

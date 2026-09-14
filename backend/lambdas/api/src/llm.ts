@@ -1,3 +1,5 @@
+import { apiKeyForProvider, resolveModelId } from "./models.js";
+
 export interface ChatRequest {
   apiKey?: string;
   provider?: string;
@@ -64,12 +66,12 @@ function modelName(model: string, provider: string): string {
 }
 
 export async function* streamChat(request: ChatRequest): AsyncGenerator<ChatChunk> {
-  const apiKey = request.apiKey || process.env.OPENROUTER_API_KEY;
+  const provider = providerOf(request.model, request.provider);
+  const apiKey = apiKeyForProvider(provider, request.apiKey);
   if (!apiKey) {
     throw new Error("Missing API key. Add one in Settings.");
   }
-  const provider = providerOf(request.model, request.provider);
-  const model = modelName(request.model, provider);
+  const model = resolveModelId(modelName(request.model, provider));
   const url = endpointFor(provider, apiKey);
 
   if (provider === "anthropic") {
@@ -145,7 +147,7 @@ async function* streamAnthropic(
     headers: headersFor("anthropic", apiKey),
     body: JSON.stringify({
       model,
-      max_tokens: 2048,
+      max_tokens: 8192,
       stream: true,
       system,
       messages: rest,

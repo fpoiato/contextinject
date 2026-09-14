@@ -18,6 +18,23 @@ const DEFAULTS: AppSettings = {
   darkMode: true,
 };
 
+/** Retired IDs that Anthropic now rejects with 404 not_found_error. */
+const RETIRED_MODEL_ALIASES: Record<string, string> = {
+  "claude-sonnet-4-20250514": "claude-sonnet-5",
+  "claude-opus-4-20250514": "claude-opus-5",
+  "claude-opus-4-1-20250805": "claude-opus-5",
+  "claude-3-5-sonnet-latest": "claude-sonnet-5",
+  "claude-3-5-haiku-latest": "claude-haiku-4-5",
+  "claude-sonnet-4": "claude-sonnet-5",
+  "anthropic/claude-3.5-sonnet": "anthropic/claude-sonnet-5",
+  "anthropic/claude-sonnet-4": "anthropic/claude-sonnet-5",
+  "anthropic/claude-3-haiku": "anthropic/claude-haiku-4.5",
+};
+
+export function resolveStoredModel(model: string): string {
+  return RETIRED_MODEL_ALIASES[model] ?? model;
+}
+
 @Injectable({ providedIn: "root" })
 export class SettingsService {
   private readonly state = signal<AppSettings>(this.read());
@@ -39,7 +56,14 @@ export class SettingsService {
   private read(): AppSettings {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? { ...DEFAULTS, ...(JSON.parse(raw) as AppSettings) } : DEFAULTS;
+      const parsed = raw ? { ...DEFAULTS, ...(JSON.parse(raw) as AppSettings) } : DEFAULTS;
+      const model = resolveStoredModel(parsed.model);
+      if (model === parsed.model) {
+        return parsed;
+      }
+      const next = { ...parsed, model };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      return next;
     } catch {
       return DEFAULTS;
     }
@@ -61,9 +85,9 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { provider: "openrouter", id: "openai/gpt-4o", label: "GPT-4o" },
   { provider: "openrouter", id: "openai/gpt-4.1-mini", label: "GPT-4.1 mini" },
   { provider: "openrouter", id: "openai/gpt-4.1", label: "GPT-4.1" },
-  { provider: "openrouter", id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet" },
-  { provider: "openrouter", id: "anthropic/claude-sonnet-4", label: "Claude Sonnet 4" },
-  { provider: "openrouter", id: "anthropic/claude-3-haiku", label: "Claude 3 Haiku" },
+  { provider: "openrouter", id: "anthropic/claude-sonnet-5", label: "Claude Sonnet 5" },
+  { provider: "openrouter", id: "anthropic/claude-opus-5", label: "Claude Opus 5" },
+  { provider: "openrouter", id: "anthropic/claude-haiku-4.5", label: "Claude Haiku 4.5" },
   { provider: "openrouter", id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash" },
   { provider: "openrouter", id: "google/gemini-2.5-flash", label: "Gemini 2.5 Flash" },
   { provider: "openrouter", id: "google/gemini-2.5-pro", label: "Gemini 2.5 Pro" },
@@ -77,9 +101,10 @@ export const MODEL_OPTIONS: ModelOption[] = [
   { provider: "openai", id: "gpt-4o", label: "GPT-4o" },
   { provider: "openai", id: "gpt-4.1-mini", label: "GPT-4.1 mini" },
   { provider: "openai", id: "gpt-4.1", label: "GPT-4.1" },
-  { provider: "anthropic", id: "claude-sonnet-4-20250514", label: "Claude Sonnet 4" },
-  { provider: "anthropic", id: "claude-3-5-sonnet-latest", label: "Claude 3.5 Sonnet" },
-  { provider: "anthropic", id: "claude-3-5-haiku-latest", label: "Claude 3.5 Haiku" },
+  { provider: "anthropic", id: "claude-sonnet-5", label: "Claude Sonnet 5" },
+  { provider: "anthropic", id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6" },
+  { provider: "anthropic", id: "claude-opus-5", label: "Claude Opus 5" },
+  { provider: "anthropic", id: "claude-haiku-4-5", label: "Claude Haiku 4.5" },
   { provider: "gemini", id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
   { provider: "gemini", id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
   { provider: "gemini", id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
