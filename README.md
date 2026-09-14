@@ -1,35 +1,35 @@
 # easyRAG
 
-Chat RAG com documentos próprios: Angular no front, AWS serverless no back, PostgreSQL + `pgvector` para busca por similaridade.
+SaaS de chat RAG com documentos próprios: Angular no front, AWS serverless no back, PostgreSQL + `pgvector` para busca por similaridade, Cognito para autenticação e BYOK (bring your own key) para os modelos.
 
 ## URLs
 
-- App: https://easyrag.fpoiato.com
+- Site + app: https://easyrag.fpoiato.com (`/`, `/pricing`, `/faq`, `/terms`, `/privacy`, `/app`)
 - API: https://api.easyrag.fpoiato.com
 
 ## Arquitetura (custo baixo)
 
-- **Frontend:** Angular 22 + Tailwind, hospedado em S3 + CloudFront.
+- **Frontend:** Angular 22 + Tailwind, hospedado em S3 + CloudFront. Área pública (landing, pricing, FAQ, termos, privacidade) e workspace autenticado em `/app`.
+- **Auth:** Cognito User Pool (`easyrag-users`) com Managed Login, fluxo Authorization Code + PKCE via `oidc-client-ts`. O front envia o **ID token** como `Authorization: Bearer`; a API valida com `aws-jwt-verify`. Grupo `admin` libera `POST /db/stop`.
+- **Tenancy:** `users` → `projects` → `folders` (árvore) → `documents`/`chunks`/`chat_sessions`. Toda query filtra por `user_id` (o `sub` do Cognito). Chaves S3: `uploads/{sub}/{projectId}/{documentId}/{filename}`.
+- **BYOK:** cada usuário guarda suas chaves (OpenRouter, OpenAI, Anthropic, Gemini, Grok) em um secret próprio do Secrets Manager (`easyrag/users/{sub}/llm-keys`). A chave nunca volta ao browser; o chat usa a chave do provedor escolhido, com fallback para a chave OpenRouter.
+- **Planos (por armazenamento):** Starter US$ 10/mês até 1 GB · Pro US$ 50/mês até 50 GB · Business US$ 100/mês até 200 GB · acima disso, contato. O limite é checado no presign (tamanho declarado) e confirmado na ingestão (tamanho real; excedente é apagado e marcado como erro). Cobrança (Stripe) ainda não está ligada: todo usuário novo nasce em `starter`; o plano é a coluna `users.plan`.
 - **API:** Lambda Function URL com streaming (`RESPONSE_STREAM`) atrás de CloudFront + OAC.
-- **Ingestão:** Lambda Python (LlamaParse se houver chave; senão pypdf/texto) + chunking.
+- **Ingestão:** Lambda Python invocada por `POST /uploads/complete` (sem trigger S3), lê dono/projeto da linha em `documents`, extrai texto (LlamaParse se houver chave; senão pypdf/texto) e faz chunking.
 - **Embeddings:** Lambda Python com `multilingual-e5-base` (ONNX Xenova, 768 dimensões).
-- **Banco:** RDS PostgreSQL 16 `db.t4g.micro` (menor instância), Single-AZ, 20 GB gp3, público para evitar NAT Gateway (~US$ 32/mês).
-- **Stop automático:** EventBridge Scheduler às 02:00 America/Sao_Paulo chama uma Lambda que executa `StopDBInstance`. Liga pelo botão em Settings ou `POST /db/start`.
-
-RDS parado ainda cobra storage. A AWS religa instâncias paradas após 7 dias; o job diário volta a desligar.
-
-Não usei Aurora Serverless neste primeiro provisionamento: a menor Aurora ligada custa bem mais, e o pedido foi desligar o RDS manualmente / por agenda.
+- **Banco:** RDS PostgreSQL 16 `db.t4g.micro`, Single-AZ, 20 GB gp3, público para evitar NAT Gateway.
+- **Stop automático:** EventBridge Scheduler às 02:00 America/Sao_Paulo desliga o RDS. Qualquer usuário autenticado pode religar em Account → Database (`POST /db/start`); só admin desliga.
 
 ## Monorepo
 
 ```
-frontend/                 Angular standalone
-backend/infra/           AWS CDK (TypeScript)
-backend/lambdas/api/     Chat, presign, sessões, start/stop RDS
-backend/lambdas/ingest/   Extração + chunking
+frontend/                 Angular standalone (public/, auth/, workspace/, chat/, account/)
+backend/infra/            AWS CDK (TypeScript): Cognito, RDS, S3, CloudFront, Lambdas, Scheduler
+backend/lambdas/api/      Auth, projetos, pastas, documentos, chaves BYOK, chat, start/stop RDS
+backend/lambdas/ingest/   Extração + chunking (lê a row de documents)
 backend/lambdas/embed/    multilingual-e5-base → pgvector
 backend/lambdas/stop_rds/ Agenda noturna
-backend/lambdas/shared/   schema SQL, db, parse, chunking
+backend/lambdas/shared/   schema.sql (idempotente, usado por Node e Python), db, parse, chunking
 ```
 
 ## Deploy
@@ -41,31 +41,40 @@ export AWS_DEFAULT_REGION=us-east-1
 ./scripts/deploy.sh
 ```
 
-Variáveis opcionais no ambiente de deploy:
+Variável opcional no ambiente de deploy: `LLAMA_CLOUD_API_KEY` (ativa extração LlamaParse). Não existe mais chave de LLM da plataforma: cada usuário cadastra a própria em Account → API keys.
 
-- `openrouter` / `OPENROUTER_API_KEY` — fallback se o usuário não preencher Settings
-- `anthropic` / `ANTHROPIC_API_KEY` — fallback para o provedor Anthropic
-- `LLAMA_CLOUD_API_KEY` — ativa extração LlamaParse
+Para tornar um usuário admin (pode desligar o banco):
 
-O dropdown de Settings usa IDs atuais da Anthropic (`claude-sonnet-5`, `claude-opus-5`, `claude-haiku-4-5`). IDs aposentados como `claude-sonnet-4-20250514` são remapeados automaticamente.
+```bash
+aws cognito-idp admin-add-user-to-group --user-pool-id <UserPoolId> --group-name admin --username <email>
+```
+
+O `schema.sql` é aplicado a cada cold start (`CREATE ... IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`), então mudanças de schema entram no deploy sem passo manual.
 
 ## Endpoints
 
+Todos exigem `Authorization: Bearer <id token>` exceto `/health` e `/config`.
+
 | Método | Caminho | Uso |
 |--------|---------|-----|
-| GET | `/health` | liveness |
-| GET | `/db` | status do RDS |
-| POST | `/db/start` | liga o RDS |
-| POST | `/db/stop` | desliga o RDS |
-| POST | `/uploads/presign` | URL pré-assinada S3 |
-| POST | `/uploads/complete` | dispara ingestão |
-| GET | `/documents` | lista arquivos |
-| GET | `/sessions` | histórico |
-| POST | `/chat` | RAG + streaming SSE |
+| GET | `/config` | user pool, client id, domínio Cognito, planos |
+| GET / PATCH | `/me` | perfil, plano, uso, chaves (mascaradas), settings |
+| GET | `/me/keys` · PUT/DELETE `/me/keys/:provider` | chaves BYOK no Secrets Manager |
+| GET | `/db` · POST `/db/start` · POST `/db/stop` (admin) | RDS |
+| GET / POST | `/projects` · PATCH/DELETE `/projects/:id` | projetos |
+| GET | `/projects/:id/tree` | pastas + documentos do projeto |
+| POST | `/projects/:id/folders` · PATCH/DELETE `/folders/:id` | pastas (renomear, mover, excluir recursivo) |
+| POST | `/projects/:id/uploads/presign` | cria `documents` row + URL pré-assinada (checa quota) |
+| POST | `/uploads/complete` | dispara ingestão do `documentId` |
+| PATCH / DELETE | `/documents/:id` | renomear, mover de pasta, excluir (S3 + índice) |
+| GET | `/projects/:id/sessions` · GET/DELETE `/sessions/:id` | histórico por projeto |
+| POST | `/chat` | RAG + streaming SSE, escopo por `projectId` e opcionalmente `folderId` (inclui subpastas) |
 
 ## Fluxo RAG
 
-1. Browser pede presign → PUT direto no S3 → `complete` ou evento S3 dispara ingestão.
-2. Ingestão extrai texto, gera chunks e grava em `chunks`.
+1. Browser pede presign (projeto/pasta/tamanho) → PUT direto no S3 → `complete` invoca a ingestão.
+2. Ingestão confere quota com o tamanho real, extrai texto, gera chunks e grava em `chunks` com `project_id`.
 3. Embeddings `passage: ...` com e5-base vão para `vector(768)`.
-4. A pergunta é embedada com `query: ...`, busca `ORDER BY embedding <=> $1`, e o contexto entra no prompt do provedor escolhido (OpenRouter/OpenAI/Anthropic/Gemini/Grok).
+4. A pergunta é embedada com `query: ...`, busca `ORDER BY embedding <=> $1` filtrando `user_id`, `project_id` e (opcional) subárvore de pastas, e o contexto entra no prompt do provedor escolhido com a chave do usuário.
+
+O dropdown de modelos usa IDs atuais dos provedores; IDs aposentados (ex.: `claude-sonnet-4-20250514`) são remapeados automaticamente no front e no back.
