@@ -337,8 +337,12 @@ def montar_corridas(
     meta: dict[int, dict], resultados: dict[int, list[dict]], datas: list[date]
 ) -> list[dict]:
     corridas = []
-    for rid in sorted(meta):
+    etapa_ano: dict[int, int] = defaultdict(int)
+    for idx, rid in enumerate(sorted(meta), start=1):
         d = datas[rid - 1]
+        ano = temporada_de(d)
+        etapa_ano[ano] += 1
+        etapa_t = etapa_ano[ano]
         res = resultados[rid]
         ovt = ultrapassagens(res)
         melhor_volta_piloto = None
@@ -352,14 +356,17 @@ def montar_corridas(
                 melhor_volta_piloto = r["pilotoId"]
         pole = next(r["pilotoId"] for r in res if r["polePosition"])
         vencedor = next(r["pilotoId"] for r in res if r["posicao"] == 1)
+        grid = montar_grid(res)
         for r in res:
             r["ultrapassagens"] = ovt.get(r["pilotoId"], 0)
-            r["posicaoGrid"] = montar_grid(res).get(r["pilotoId"])
+            r["posicaoGrid"] = grid.get(r["pilotoId"])
         corridas.append(
             {
-                "id": rid,
-                "etapaGeral": rid,
-                "temporada": temporada_de(d),
+                "id": f"{ano}-{etapa_t:02d}",
+                "etapaTemporada": etapa_t,
+                "etapaGeral": idx,
+                "temporada": ano,
+                "ultimaEtapaTemporada": False,
                 "data": d.isoformat(),
                 "local": meta[rid]["local"],
                 "sentidoPista": meta[rid]["sentido"],
@@ -372,6 +379,127 @@ def montar_corridas(
             }
         )
     return corridas
+
+
+def _vazio_agg() -> dict:
+    return {
+        "pontos": 0,
+        "vitorias": 0,
+        "podios": 0,
+        "poles": 0,
+        "melhoresVoltas": 0,
+        "ultrapassagens": 0,
+        "presencas": 0,
+        "ausencias": 0,
+        "quebras": 0,
+        "desclassificacoes": 0,
+        "advertencias": 0,
+        "trocasDeCarro": 0,
+    }
+
+
+def agregar_temporada(corridas: list[dict]) -> dict[int, dict]:
+    agg: dict[int, dict] = defaultdict(_vazio_agg)
+    for c in corridas:
+        for r in c["resultados"]:
+            a = agg[r["pilotoId"]]
+            a["pontos"] += r["pontos"]
+            if r["presente"]:
+                a["presencas"] += 1
+            else:
+                a["ausencias"] += 1
+            if r["posicao"] == 1:
+                a["vitorias"] += 1
+            if r["posicao"] in (1, 2, 3):
+                a["podios"] += 1
+            if r["polePosition"]:
+                a["poles"] += 1
+            if r["pilotoId"] == c["melhorVoltaPilotoId"]:
+                a["melhoresVoltas"] += 1
+            a["ultrapassagens"] += r.get("ultrapassagens") or 0
+            if r["quebra"]:
+                a["quebras"] += 1
+            if r["bandeira"] == "preta":
+                a["desclassificacoes"] += 1
+            if r["bandeira"] == "preta_e_branca":
+                a["advertencias"] += 1
+            if r["trocaDeCarro"]:
+                a["trocasDeCarro"] += 1
+    return agg
+
+
+def ranking_agg(agg: dict[int, dict], por_id: dict[int, dict]) -> list[dict]:
+    ranking = []
+    for pid, a in agg.items():
+        p = por_id[pid]
+        ranking.append(
+            {
+                "pilotoId": pid,
+                "nome": p["nome"],
+                "cores": p["cores"],
+                "idade": p["idade"],
+                "peso_kg": p["peso_kg"],
+                "lastro_kg": p["lastro_kg"],
+                **a,
+            }
+        )
+    ranking.sort(key=lambda x: (-x["pontos"], -x["vitorias"], -x["podios"], x["nome"]))
+    for i, row in enumerate(ranking, start=1):
+        row["posicao"] = i
+    return ranking
+
+
+def lider_destaque(ranking: list[dict], campo: str) -> dict:
+    melhor = max(ranking, key=lambda x: (x[campo], -x["pilotoId"]))
+    return {
+        "pilotoId": melhor["pilotoId"],
+        "nome": melhor["nome"],
+        campo: melhor[campo],
+    }
+
+
+def montar_especial(ano: int, corridas_ano: list[dict], pilotos: list[dict]) -> dict:
+    por_id = {p["id"]: p for p in pilotos}
+    agg = agregar_temporada(corridas_ano)
+    ranking = ranking_agg(agg, por_id)
+    p1, p2, p3 = ranking[0], ranking[1], ranking[2]
+    return {
+        "temporada": ano,
+        "etapaId": corridas_ano[-1]["id"],
+        "totalEtapas": len(corridas_ano),
+        "podio": [
+            {**p1, "titulo": "campeao"},
+            {**p2, "titulo": "vice"},
+            {**p3, "titulo": "terceiro"},
+        ],
+        "diferencaCampeaoVice": p1["pontos"] - p2["pontos"],
+        "diferencaViceTerceiro": p2["pontos"] - p3["pontos"],
+        "destaques": {
+            "maisVitorias": lider_destaque(ranking, "vitorias"),
+            "maisPoles": lider_destaque(ranking, "poles"),
+            "maisMelhoresVoltas": lider_destaque(ranking, "melhoresVoltas"),
+            "maisUltrapassagens": lider_destaque(ranking, "ultrapassagens"),
+            "maisPresencas": lider_destaque(ranking, "presencas"),
+            "maisQuebras": lider_destaque(ranking, "quebras"),
+            "maisDesclassificacoes": lider_destaque(ranking, "desclassificacoes"),
+            "maisAdvertencias": lider_destaque(ranking, "advertencias"),
+        },
+        "classificacaoFinal": ranking,
+    }
+
+
+def anexar_especiais(corridas: list[dict], pilotos: list[dict]) -> dict[int, list[dict]]:
+    por_ano: dict[int, list[dict]] = defaultdict(list)
+    for c in corridas:
+        por_ano[c["temporada"]].append(c)
+    classificacoes: dict[int, list[dict]] = {}
+    for ano, lista in por_ano.items():
+        especial = montar_especial(ano, lista, pilotos)
+        ultima = lista[-1]
+        ultima["ultimaEtapaTemporada"] = True
+        ultima["especialTemporada"] = especial
+        classificacoes[ano] = especial["classificacaoFinal"]
+    return classificacoes
 
 
 def classificacao(corridas: list[dict], pilotos: list[dict]) -> list[dict]:
@@ -427,7 +555,105 @@ def pl(n: int, singular: str, plural: str) -> str:
 
 
 def nome_kart(piloto: dict) -> str:
-    return f"{piloto['nome']}, de kart {cores_txt(piloto['cores'])}"
+    cores = piloto.get("cores") or []
+    if cores:
+        return f"{piloto['nome']}, de kart {cores_txt(cores)}"
+    return piloto["nome"]
+
+
+def piloto_especial(row: dict, por_id: dict[int, dict]) -> dict:
+    base = por_id[row["pilotoId"]]
+    return {**base, **row}
+
+
+def render_especial(especial: dict, por_id: dict[int, dict]) -> list[str]:
+    ano = especial["temporada"]
+    etapa_id = especial["etapaId"]
+    n = especial["totalEtapas"]
+    p1, p2, p3 = especial["podio"]
+    d1 = especial["destaques"]
+    blocos = [
+        f"## Especial de encerramento — Temporada {ano} (etapa {etapa_id})",
+        "",
+        (
+            f"A etapa {etapa_id} fecha a temporada {ano} da Copa Traçado, com "
+            f"{pl(n, 'prova', 'provas')}. O ID das etapas desta temporada recomeça em "
+            f"{ano}-01 e vai até {etapa_id}."
+        ),
+        "",
+        "### Campeão, vice e terceiro",
+        "",
+    ]
+
+    def ficha(row: dict, titulo: str) -> str:
+        p = piloto_especial(row, por_id)
+        return (
+            f"**{titulo}: {nome_kart(p)}.** {p['idade']} anos, {br_num(p['peso_kg'])} kg, "
+            f"lastro de {br_num(p['lastro_kg'])} kg. Fechou {ano} em {row['posicao']}º na "
+            f"temporada, com {pl(row['pontos'], 'ponto', 'pontos')}, "
+            f"{pl(row['vitorias'], 'vitória', 'vitórias')}, "
+            f"{pl(row['podios'], 'pódio', 'pódios')}, "
+            f"{pl(row['poles'], 'pole', 'poles')} e "
+            f"{pl(row['melhoresVoltas'], 'melhor volta', 'melhores voltas')}. "
+            f"Esteve presente em {pl(row['presencas'], 'etapa', 'etapas')} "
+            f"e faltou a {pl(row['ausencias'], 'prova', 'provas')}."
+        )
+
+    blocos.append(ficha(p1, "Campeão da temporada"))
+    blocos.append(ficha(p2, "Vice-campeão"))
+    blocos.append(ficha(p3, "Terceiro colocado"))
+    blocos.append("")
+    blocos.append(
+        f"O título de {ano} ficou definido por {pl(especial['diferencaCampeaoVice'], 'ponto', 'pontos')} "
+        f"de {p1['nome']} sobre {p2['nome']}. Entre vice e terceiro, a diferença foi de "
+        f"{pl(especial['diferencaViceTerceiro'], 'ponto', 'pontos')} ({p2['nome']} à frente de {p3['nome']})."
+    )
+    blocos.append("")
+    blocos.append("### Destaques da temporada")
+    blocos.append("")
+    blocos.append(
+        f"- Mais vitórias em {ano}: {d1['maisVitorias']['nome']}, com "
+        f"{pl(d1['maisVitorias']['vitorias'], 'vitória', 'vitórias')}."
+    )
+    blocos.append(
+        f"- Mais poles em {ano}: {d1['maisPoles']['nome']}, com "
+        f"{pl(d1['maisPoles']['poles'], 'pole', 'poles')}."
+    )
+    blocos.append(
+        f"- Mais voltas mais rápidas em {ano}: {d1['maisMelhoresVoltas']['nome']}, com "
+        f"{pl(d1['maisMelhoresVoltas']['melhoresVoltas'], 'melhor volta', 'melhores voltas')}."
+    )
+    blocos.append(
+        f"- Rei das ultrapassagens em {ano}: {d1['maisUltrapassagens']['nome']}, com "
+        f"{pl(d1['maisUltrapassagens']['ultrapassagens'], 'ultrapassagem', 'ultrapassagens')}."
+    )
+    blocos.append(
+        f"- Melhor presença em {ano}: {d1['maisPresencas']['nome']}, com "
+        f"{pl(d1['maisPresencas']['presencas'], 'etapa', 'etapas')} disputadas."
+    )
+    blocos.append(
+        f"- Mais quebras em {ano}: {d1['maisQuebras']['nome']}, com "
+        f"{pl(d1['maisQuebras']['quebras'], 'quebra', 'quebras')}."
+    )
+    blocos.append(
+        f"- Mais bandeiras pretas em {ano}: {d1['maisDesclassificacoes']['nome']}, com "
+        f"{pl(d1['maisDesclassificacoes']['desclassificacoes'], 'desclassificação', 'desclassificações')}."
+    )
+    blocos.append(
+        f"- Mais bandeiras pretas e brancas em {ano}: {d1['maisAdvertencias']['nome']}, com "
+        f"{pl(d1['maisAdvertencias']['advertencias'], 'advertência', 'advertências')}."
+    )
+    top10 = especial["classificacaoFinal"][:10]
+    lista = "; ".join(
+        f"{x['posicao']}º {x['nome']} ({x['pontos']} pts, {pl(x['vitorias'], 'vitória', 'vitórias')})"
+        for x in top10
+    )
+    blocos.append("")
+    blocos.append(
+        f"Classificação final da temporada {ano} (top 10), após a etapa {etapa_id}: {lista}."
+    )
+    blocos.append("")
+    return blocos
 
 
 def gerar_artigos(data: dict) -> None:
@@ -459,7 +685,9 @@ def gerar_artigos(data: dict) -> None:
             f"referência de 100 kg: o lastro é só a diferença positiva até essa marca; piloto com "
             f"100 kg ou mais corre sem lastro. Quem falta zera a etapa. Quem larga e não leva "
             f"bandeira preta pontua. O pódio leva 40, 32 e 26 pontos — vantagem clara sobre os "
-            f"14 do quarto colocado. Bandeira preta desclassifica; preta e branca é advertência."
+            f"14 do quarto colocado. Bandeira preta desclassifica; preta e branca é advertência. "
+            f"O ID das etapas reinicia a cada temporada no formato {ano}-## "
+            f"(a primeira prova do ano é {ano}-01)."
         )
         blocos.append("")
 
@@ -473,7 +701,7 @@ def gerar_artigos(data: dict) -> None:
             pole = por_id[corrida["polePositionPilotoId"]]
             mv = por_id[corrida["melhorVoltaPilotoId"]]
             vencedores_mes.append(
-                f"etapa {corrida['etapaGeral']} com {nome_kart(vencedor)}"
+                f"etapa {corrida['id']} com {nome_kart(vencedor)}"
             )
 
             sentido = (
@@ -482,11 +710,11 @@ def gerar_artigos(data: dict) -> None:
                 else "sentido anti-horário"
             )
             blocos.append(
-                f"## Etapa {corrida['etapaGeral']} — {corrida['local']}, {data_extenso(corrida['data'])}"
+                f"## Etapa {corrida['id']} — {corrida['local']}, {data_extenso(corrida['data'])}"
             )
             blocos.append("")
             blocos.append(
-                f"A etapa {corrida['etapaGeral']} da Copa Traçado, válida pela temporada "
+                f"A etapa {corrida['id']} da Copa Traçado, válida pela temporada "
                 f"{corrida['temporada']}, foi no {corrida['local']}, pista de "
                 f"{br_num(corrida['extensaoM'])} metros, {sentido}. A prova aconteceu no sábado "
                 f"{data_extenso(corrida['data'])}. A pole position ficou com {nome_kart(pole)}. "
@@ -551,7 +779,7 @@ def gerar_artigos(data: dict) -> None:
             else:
                 blocos.append("Os 30 inscritos compareceram.")
             blocos.append(
-                f"O piloto que mais ultrapassou na etapa {corrida['etapaGeral']} foi "
+                f"O piloto que mais ultrapassou na etapa {corrida['id']} foi "
                 f"{nome_kart(por_id[lider_ovt['pilotoId']])}: "
                 f"{pl(lider_ovt['ultrapassagens'], 'ultrapassagem', 'ultrapassagens')}, "
                 f"saindo da {lider_ovt.get('posicaoGrid')}ª posição no grid."
@@ -579,7 +807,7 @@ def gerar_artigos(data: dict) -> None:
                 )
                 if not r["presente"]:
                     frase = (
-                        f"{nome_kart(p)} ({peso}) não compareceu à etapa {corrida['etapaGeral']} "
+                        f"{nome_kart(p)} ({peso}) não compareceu à etapa {corrida['id']} "
                         f"em {corrida['local']}. Pontos na etapa: 0. "
                         f"Acumulado após esta etapa: {pl(acum[p['id']], 'ponto', 'pontos')} na Copa Traçado "
                         f"e {pl(acum_temp[(corrida['temporada'], p['id'])], 'ponto', 'pontos')} "
@@ -628,7 +856,7 @@ def gerar_artigos(data: dict) -> None:
                         f"com tempo total {r['tempoTotal']}, {pl(r['numeroVoltas'], 'volta', 'voltas')} "
                         f"e melhor volta {r['melhorVolta']}. Largou em {grid_pos}º e fez "
                         f"{pl(ovt, 'ultrapassagem', 'ultrapassagens')}.{adv_txt}{troca_txt} "
-                        f"Pontos conquistados na etapa {corrida['etapaGeral']}: {r['pontos']}. "
+                        f"Pontos conquistados na etapa {corrida['id']}: {r['pontos']}. "
                         f"Acumulado após esta etapa: {pl(acum[p['id']], 'ponto', 'pontos')} na Copa Traçado "
                         f"e {pl(acum_temp[(corrida['temporada'], p['id'])], 'ponto', 'pontos')} "
                         f"na temporada {corrida['temporada']}."
@@ -660,12 +888,14 @@ def gerar_artigos(data: dict) -> None:
             blocos.append("")
             blocos.append(
                 f"Top 10 da Copa Traçado (geral, somando 2024, 2025 e 2026) depois da etapa "
-                f"{corrida['etapaGeral']}: {lista_top}."
+                f"{corrida['id']}: {lista_top}."
             )
             blocos.append(
                 f"Top 8 da temporada {corrida['temporada']} depois desta etapa: {lista_temp}."
             )
             blocos.append("")
+            if corrida.get("ultimaEtapaTemporada") and corrida.get("especialTemporada"):
+                blocos.extend(render_especial(corrida["especialTemporada"], por_id))
 
         lider = max(acum.items(), key=lambda kv: kv[1])
         blocos.append(f"## Fecha {MESES[mes]} de {ano}")
@@ -678,9 +908,9 @@ def gerar_artigos(data: dict) -> None:
         if ano == 2026 and mes == 9:
             campeao = max(acum.items(), key=lambda kv: kv[1])
             blocos.append(
-                f"A etapa 42, no sábado 12 de setembro de 2026, encerra a Copa Traçado. "
-                f"Campeão geral: {nome_kart(por_id[campeao[0]])}, com "
-                f"{pl(campeao[1], 'ponto', 'pontos')} somados nas 42 etapas."
+                f"A etapa 2026-12, no sábado 12 de setembro de 2026, encerra a Copa Traçado. "
+                f"Campeão geral das três temporadas: {nome_kart(por_id[campeao[0]])}, com "
+                f"{pl(campeao[1], 'ponto', 'pontos')} somados nas 42 etapas (2024-01 a 2026-12)."
             )
         blocos.append(
             "Quem não correu em alguma prova deste mês zerou a etapa correspondente. "
@@ -701,7 +931,14 @@ def main() -> None:
     pilotos = montar_pilotos(nomes, rows)
     resultados = montar_resultados(rows)
     corridas = montar_corridas(meta, resultados, datas)
+    por_temp = anexar_especiais(corridas, pilotos)
     geral = classificacao(corridas, pilotos)
+    ids = [c["id"] for c in corridas]
+    assert ids[0] == "2024-01"
+    assert ids[15] == "2024-16"
+    assert ids[16] == "2025-01"
+    assert ids[-1] == "2026-12"
+    assert sum(1 for c in corridas if c.get("especialTemporada")) == 3
 
     data = {
         "campeonato": {
@@ -711,6 +948,7 @@ def main() -> None:
                 "inicio": datas[0].isoformat(),
                 "fim": datas[-1].isoformat(),
             },
+            "identificacaoEtapas": "Cada temporada reinicia o ID em AAAA-##. 2024-01 a 2024-16; 2025-01 a 2025-14; 2026-01 a 2026-12.",
             "totalPilotos": 30,
             "totalCorridas": 42,
             "regulamento": {
@@ -746,6 +984,9 @@ def main() -> None:
         "pilotos": pilotos,
         "corridas": corridas,
         "classificacaoGeral": geral,
+        "classificacaoPorTemporada": {
+            str(ano): ranking for ano, ranking in por_temp.items()
+        },
     }
 
     OUT_JSON.parent.mkdir(parents=True, exist_ok=True)
