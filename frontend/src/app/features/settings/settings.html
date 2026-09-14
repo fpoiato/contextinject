@@ -15,7 +15,11 @@
 
     <label class="mb-3 block text-sm">
       <span class="mb-1 block text-slate-400">Provider</span>
-      <select class="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2" [(ngModel)]="provider">
+      <select
+        class="w-full appearance-auto rounded-xl border border-slate-800 bg-slate-900 px-3 py-2"
+        [(ngModel)]="provider"
+        (ngModelChange)="onProviderChange()"
+      >
         <option value="openrouter">OpenRouter</option>
         <option value="openai">OpenAI</option>
         <option value="anthropic">Anthropic</option>
@@ -26,16 +30,14 @@
 
     <label class="mb-3 block text-sm">
       <span class="mb-1 block text-slate-400">Model</span>
-      <input
-        class="w-full rounded-xl border border-slate-800 bg-slate-900 px-3 py-2"
-        list="model-options"
+      <select
+        class="w-full appearance-auto rounded-xl border border-slate-800 bg-slate-900 px-3 py-2"
         [(ngModel)]="model"
-      />
-      <datalist id="model-options">
-        @for (item of models; track item.id) {
-          <option [value]="item.id">{{ item.label }}</option>
+      >
+        @for (item of models(); track item.provider + item.id) {
+          <option [value]="item.id">{{ item.label }} — {{ item.id }}</option>
         }
-      </datalist>
+      </select>
     </label>
 
     <label class="mb-4 block text-sm">
