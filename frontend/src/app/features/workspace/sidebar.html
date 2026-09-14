@@ -4,17 +4,16 @@
   <div class="flex items-center gap-2">
     <select
       class="min-w-0 flex-1 appearance-auto rounded-xl border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-      [value]="store.currentProjectId() ?? ''"
       (change)="selectProject($event)"
       [disabled]="busy()"
     >
       @if (!store.projects().length) {
-        <option value="">No projects</option>
+        <option value="" [selected]="true">No projects</option>
       }
       @for (project of store.projects(); track project.id) {
-        <option [value]="project.id">{{ project.name }}</option>
+        <option [value]="project.id" [selected]="project.id === store.currentProjectId()">{{ project.name }}</option>
       }
-      <option value="__new__">+ New project…</option>
+      <option value="__new__" [selected]="false">+ New project…</option>
     </select>
     <div class="relative">
       <button
@@ -100,7 +99,7 @@
         [class.text-cyan-200]="store.currentFolderId() === row.folder.id"
         (click)="selectFolder(row.folder.id)"
       >
-        <span class="text-slate-500">▸</span>
+        <span class="text-slate-500">▤</span>
         <span class="truncate">{{ row.folder.name }}</span>
         <span class="ml-auto text-[11px] text-slate-500">{{ row.documentCount }}</span>
       </button>

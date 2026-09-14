@@ -166,7 +166,8 @@ export class EasyRagStack extends Stack {
       userPoolClientName: "easyrag-web",
       generateSecret: false,
       preventUserExistenceErrors: true,
-      authFlows: { userSrp: true },
+      // adminUserPassword needs IAM credentials; it exists for operator smoke tests only.
+      authFlows: { userSrp: true, adminUserPassword: true },
       oAuth: {
         flows: { authorizationCodeGrant: true },
         scopes: [cognito.OAuthScope.OPENID, cognito.OAuthScope.EMAIL, cognito.OAuthScope.PROFILE],

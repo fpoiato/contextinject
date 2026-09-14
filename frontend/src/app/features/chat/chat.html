@@ -3,22 +3,20 @@
   <div class="flex flex-wrap items-center gap-2 border-b border-slate-800/70 px-4 py-2 text-xs md:px-6">
     <select
       class="appearance-auto rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5"
-      [value]="settings.settings().provider"
       (change)="setProvider($event)"
       title="Provider"
     >
       @for (provider of providers; track provider.id) {
-        <option [value]="provider.id">{{ provider.label }}</option>
+        <option [value]="provider.id" [selected]="provider.id === settings.settings().provider">{{ provider.label }}</option>
       }
     </select>
     <select
       class="max-w-[14rem] appearance-auto rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5"
-      [value]="settings.settings().model"
       (change)="setModel($event)"
       title="Model"
     >
       @for (item of models(); track item.id) {
-        <option [value]="item.id">{{ item.label }}</option>
+        <option [value]="item.id" [selected]="item.id === settings.settings().model">{{ item.label }}</option>
       }
     </select>
 
@@ -26,14 +24,13 @@
 
     <select
       class="max-w-[14rem] appearance-auto rounded-lg border border-slate-800 bg-slate-900 px-2 py-1.5"
-      [value]="sessionId() ?? ''"
       (change)="openSession($event)"
       title="Conversation history"
       [disabled]="!store.currentProjectId()"
     >
-      <option value="">New conversation</option>
+      <option value="" [selected]="!sessionId()">New conversation</option>
       @for (session of sessions(); track session.id) {
-        <option [value]="session.id">{{ session.title || "Untitled" }}</option>
+        <option [value]="session.id" [selected]="session.id === sessionId()">{{ session.title || "Untitled" }}</option>
       }
     </select>
     @if (sessionId()) {
