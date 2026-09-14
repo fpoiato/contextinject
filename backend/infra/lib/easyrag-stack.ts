@@ -259,8 +259,14 @@ export class EasyRagStack extends Stack {
     });
 
     const apiUrl = apiFn.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.AWS_IAM,
+      authType: lambda.FunctionUrlAuthType.NONE,
       invokeMode: lambda.InvokeMode.RESPONSE_STREAM,
+      cors: {
+        allowedOrigins: [`https://${APP_DOMAIN}`, "http://localhost:4200"],
+        allowedMethods: [lambda.HttpMethod.ALL],
+        allowedHeaders: ["*"],
+        maxAge: Duration.hours(24),
+      },
     });
 
     const spaOrigin = origins.S3BucketOrigin.withOriginAccessControl(frontendBucket);
@@ -322,7 +328,7 @@ export class EasyRagStack extends Stack {
       httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
       minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2_2021,
       defaultBehavior: {
-        origin: origins.FunctionUrlOrigin.withOriginAccessControl(apiUrl),
+        origin: new origins.FunctionUrlOrigin(apiUrl),
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
         originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
