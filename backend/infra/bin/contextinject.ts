@@ -1,0 +1,12 @@
+#!/usr/bin/env node
+import * as cdk from "aws-cdk-lib";
+import { ContextInjectStack } from "../lib/contextinject-stack";
+
+const app = new cdk.App();
+new ContextInjectStack(app, "EasyRagStack", {
+  env: {
+    account: process.env.CDK_DEFAULT_ACCOUNT,
+    region: process.env.CDK_DEFAULT_REGION || "us-east-1",
+  },
+  description: "contextinject — low-cost RAG chat with pgvector and scheduled RDS stop",
+});

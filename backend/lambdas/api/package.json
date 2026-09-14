@@ -1,0 +1,21 @@
+{
+  "name": "contextinject-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-lambda": "^3.787.0",
+    "@aws-sdk/client-rds": "^3.787.0",
+    "@aws-sdk/client-s3": "^3.787.0",
+    "@aws-sdk/client-secrets-manager": "^3.787.0",
+    "@aws-sdk/s3-request-presigner": "^3.787.0",
+    "aws-jwt-verify": "^5.2.1",
+    "pg": "^8.14.1"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.149",
+    "@types/node": "^22.14.0",
+    "@types/pg": "^8.11.13",
+    "esbuild": "^0.28.2"
+  }
+}
