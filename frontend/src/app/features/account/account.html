@@ -1,0 +1,168 @@
+<div class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" (click)="closed.emit()">
+  <section
+    class="flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-800 bg-slate-950 text-slate-100 shadow-2xl"
+    (click)="$event.stopPropagation()"
+  >
+    <div class="flex items-center justify-between border-b border-slate-800 px-6 py-4">
+      <div class="min-w-0">
+        <h2 class="text-lg font-semibold">Account</h2>
+        <p class="truncate text-sm text-slate-400">{{ auth.email() }}</p>
+      </div>
+      <button class="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-800" type="button" (click)="closed.emit()">Close</button>
+    </div>
+
+    <div class="flex gap-1 border-b border-slate-800 px-6 pt-3 text-sm">
+      @for (item of [{ id: 'keys', label: 'API keys' }, { id: 'usage', label: 'Plan & usage' }, { id: 'database', label: 'Database' }]; track item.id) {
+        <button
+          type="button"
+          class="rounded-t-lg px-3 py-2"
+          [class.bg-slate-900]="tab() === item.id"
+          [class.text-cyan-200]="tab() === item.id"
+          [class.text-slate-400]="tab() !== item.id"
+          (click)="tab.set($any(item.id))"
+        >
+          {{ item.label }}
+        </button>
+      }
+    </div>
+
+    <div class="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      @switch (tab()) {
+        @case ("keys") {
+          <p class="mb-4 text-sm text-slate-400">
+            Bring your own key. Keys are stored encrypted in AWS Secrets Manager, used only for your chat requests and never
+            sent back to the browser. An OpenRouter key works as a fallback for every provider.
+          </p>
+          <div class="space-y-3">
+            @for (provider of providers; track provider.id) {
+              <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+                <div class="flex items-center justify-between gap-3">
+                  <div>
+                    <p class="font-medium">{{ provider.label }}</p>
+                    <p class="text-xs text-slate-500">{{ provider.hint }}</p>
+                  </div>
+                  @if (maskedFor(provider.id); as masked) {
+                    <span class="rounded-full bg-emerald-500/15 px-2 py-0.5 font-mono text-xs text-emerald-300">{{ masked }}</span>
+                  } @else {
+                    <a class="text-xs text-cyan-300 hover:text-cyan-200" [href]="provider.keysUrl" target="_blank" rel="noopener">Get a key ↗</a>
+                  }
+                </div>
+                <form class="mt-3 flex gap-2" (submit)="$event.preventDefault(); saveKey(provider.id)">
+                  <input
+                    class="min-w-0 flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
+                    type="password"
+                    autocomplete="off"
+                    [name]="'key-' + provider.id"
+                    [(ngModel)]="drafts[provider.id]"
+                    [placeholder]="maskedFor(provider.id) ? 'Paste a new key to replace' : 'Paste your key'"
+                    [disabled]="busyProvider() === provider.id"
+                  />
+                  <button
+                    class="rounded-lg bg-cyan-400 px-3 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50"
+                    type="submit"
+                    [disabled]="busyProvider() === provider.id || !(drafts[provider.id] || '').trim()"
+                  >
+                    Save
+                  </button>
+                  @if (maskedFor(provider.id)) {
+                    <button
+                      class="rounded-lg border border-slate-800 px-3 py-2 text-sm text-slate-300 hover:text-rose-300 disabled:opacity-50"
+                      type="button"
+                      [disabled]="busyProvider() === provider.id"
+                      (click)="removeKey(provider.id)"
+                    >
+                      Remove
+                    </button>
+                  }
+                </form>
+              </div>
+            }
+          </div>
+        }
+
+        @case ("usage") {
+          @if (store.me(); as me) {
+            <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+              <div class="flex items-center justify-between">
+                <div>
+                  <p class="text-sm text-slate-400">Current plan</p>
+                  <p class="text-xl font-semibold">{{ me.plan.name }} <span class="text-sm font-normal text-slate-400">— {{ '$' + me.plan.priceUsd }}/month</span></p>
+                </div>
+                <a routerLink="/pricing" class="text-sm text-cyan-300 hover:text-cyan-200" (click)="closed.emit()">Compare plans</a>
+              </div>
+              <div class="mt-4">
+                <div class="flex items-center justify-between text-sm">
+                  <span>{{ bytes(me.usage.bytes) }} of {{ bytes(me.usage.limitBytes) }}</span>
+                  <span class="text-slate-400">{{ store.usagePercent() }}%</span>
+                </div>
+                <div class="mt-1.5 h-2 overflow-hidden rounded-full bg-slate-800">
+                  <div class="h-full rounded-full bg-cyan-400" [style.width.%]="store.usagePercent()"></div>
+                </div>
+                <p class="mt-2 text-xs text-slate-500">
+                  {{ me.usage.documents }} documents across {{ store.projects().length }} project{{ store.projects().length === 1 ? "" : "s" }} · max file size
+                  {{ bytes(me.plan.maxUploadBytes) }}
+                </p>
+              </div>
+            </div>
+            <div class="mt-4 rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm">
+              <p class="font-medium">Billing</p>
+              <p class="mt-1 text-slate-400">
+                Subscription billing is being enabled. Until then every account runs on the {{ me.plan.name }} plan limits. Need more
+                than {{ bytes(me.usage.limitBytes) }} right now?
+                <a class="text-cyan-300" href="mailto:hello@fpoiato.com?subject=easyRAG%20plan%20upgrade">Contact us</a>.
+              </p>
+            </div>
+            <div class="mt-4 flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-sm">
+              <div>
+                <p class="font-medium">Appearance</p>
+                <p class="text-slate-400">Dark mode is {{ settings.settings().darkMode ? "on" : "off" }}.</p>
+              </div>
+              <button type="button" class="rounded-lg border border-slate-800 px-3 py-1.5" (click)="toggleDark()">Toggle</button>
+            </div>
+          } @else {
+            <p class="text-sm text-slate-400">Loading your account…</p>
+          }
+        }
+
+        @case ("database") {
+          <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-4">
+            <div class="mb-2 flex items-center justify-between">
+              <h3 class="text-sm font-medium">PostgreSQL</h3>
+              <span class="rounded-full bg-slate-800 px-2 py-0.5 text-xs uppercase tracking-wide">{{ dbStatus() }}</span>
+            </div>
+            <p class="mb-3 text-xs text-slate-400">
+              During the beta the database sleeps every night at 02:00 America/Sao_Paulo to keep the service cheap. Wake it before
+              uploading or chatting; it takes a few minutes to come back.
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <button
+                class="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                type="button"
+                [disabled]="dbBusy()"
+                (click)="startDb()"
+              >
+                Wake database
+              </button>
+              @if (store.me()?.isAdmin) {
+                <button
+                  class="rounded-lg bg-slate-800 px-3 py-1.5 text-sm font-medium disabled:opacity-50"
+                  type="button"
+                  [disabled]="dbBusy()"
+                  (click)="stopDb()"
+                >
+                  Stop (admin)
+                </button>
+              }
+              <button class="rounded-lg px-3 py-1.5 text-sm text-slate-400" type="button" (click)="refreshDb()">Refresh</button>
+              <button class="rounded-lg px-3 py-1.5 text-sm text-slate-400" type="button" (click)="store.init(); closed.emit()">Reload workspace</button>
+            </div>
+          </div>
+        }
+      }
+
+      @if (message()) {
+        <p class="mt-4 text-sm" [class.text-rose-300]="messageIsError()" [class.text-cyan-300]="!messageIsError()">{{ message() }}</p>
+      }
+    </div>
+  </section>
+</div>

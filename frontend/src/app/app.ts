@@ -1,14 +1,10 @@
-import { Component, signal } from "@angular/core";
-import { Chat } from "./features/chat/chat";
-import { Upload } from "./features/upload/upload";
-import { Settings } from "./features/settings/settings";
+import { Component } from "@angular/core";
+import { RouterOutlet } from "@angular/router";
 
 @Component({
   selector: "app-root",
-  imports: [Chat, Upload, Settings],
-  templateUrl: "./app.html",
+  imports: [RouterOutlet],
+  template: `<router-outlet />`,
   styleUrl: "./app.css",
 })
-export class App {
-  readonly settingsOpen = signal(false);
-}
+export class App {}

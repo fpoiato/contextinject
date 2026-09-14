@@ -1,20 +1,16 @@
 import { Injectable, computed, signal } from "@angular/core";
 
 export interface AppSettings {
-  apiKey: string;
   provider: string;
   model: string;
-  userId: string;
   darkMode: boolean;
 }
 
 const STORAGE_KEY = "easyrag.settings";
 
 const DEFAULTS: AppSettings = {
-  apiKey: "",
   provider: "openrouter",
   model: "openai/gpt-5.6-luna",
-  userId: "local",
   darkMode: true,
 };
 
@@ -62,13 +58,15 @@ export class SettingsService {
   private read(): AppSettings {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      const parsed = raw ? { ...DEFAULTS, ...(JSON.parse(raw) as AppSettings) } : DEFAULTS;
+      const stored = raw ? (JSON.parse(raw) as Partial<AppSettings> & { apiKey?: string; userId?: string }) : {};
+      // Keys used to live in localStorage; they are server-side now.
+      const { apiKey: _legacyKey, userId: _legacyUser, ...rest } = stored;
+      const parsed: AppSettings = { ...DEFAULTS, ...rest };
       const model = resolveStoredModel(parsed.model);
-      if (model === parsed.model) {
-        return parsed;
-      }
       const next = { ...parsed, model };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      if (raw !== JSON.stringify(next)) {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+      }
       return next;
     } catch {
       return DEFAULTS;
@@ -80,10 +78,27 @@ export class SettingsService {
   }
 }
 
+export type ProviderId = "openrouter" | "openai" | "anthropic" | "gemini" | "grok";
+
+export interface ProviderOption {
+  id: ProviderId;
+  label: string;
+  hint: string;
+  keysUrl: string;
+}
+
+export const PROVIDERS: ProviderOption[] = [
+  { id: "openrouter", label: "OpenRouter", hint: "One key for every model below (sk-or-...)", keysUrl: "https://openrouter.ai/keys" },
+  { id: "openai", label: "OpenAI", hint: "Direct access to GPT models", keysUrl: "https://platform.openai.com/api-keys" },
+  { id: "anthropic", label: "Anthropic", hint: "Direct access to Claude models", keysUrl: "https://console.anthropic.com/settings/keys" },
+  { id: "gemini", label: "Google Gemini", hint: "Direct access to Gemini models", keysUrl: "https://aistudio.google.com/apikey" },
+  { id: "grok", label: "xAI Grok", hint: "Direct access to Grok models", keysUrl: "https://console.x.ai" },
+];
+
 export interface ModelOption {
   id: string;
   label: string;
-  provider: "openrouter" | "openai" | "anthropic" | "gemini" | "grok";
+  provider: ProviderId;
 }
 
 export const MODEL_OPTIONS: ModelOption[] = [
